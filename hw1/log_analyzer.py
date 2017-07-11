@@ -6,13 +6,16 @@
 #                     '$status $body_bytes_sent "$http_referer" '
 #                     '"$http_user_agent" "$http_x_forwarded_for" "$http_X_REQUEST_ID" "$http_X_RB_USER" '
 #                     '$request_time';
+
+import collections
+import getopt
 import gzip
 import glob
-import os
-import re
-import collections
 import json
 import math
+import sys
+import os
+import re
 
 config = {
     "REPORT_SIZE": 1000,
@@ -28,6 +31,15 @@ pats = (r''
         )
 
 pat = re.compile(pats)
+
+
+def usage():
+    print 'Nginx Log Analyzer Tool'
+    print 'The following options are available:'
+    print '-l --log_path=/some/path/to/log.gz - path to log file'
+    print '-j --json                          - save log analyze as raw json file'
+    print '-h --help                          - print this help message and exit'
+    sys.exit(0)
 
 
 def get_report(log_stat, total_count, total_time, limit=100):
@@ -58,15 +70,18 @@ def round_f(number):
     return round(number, 3)
 
 
-def save_report(report, file_dir, file_name, file_format='html'):
-    file_path = '%s/report-%s.%s' % (file_dir, file_name, file_format)
-    if file_format == 'html':
+def save_report(report, file_path):
+    if file_path.endswith('.html'):
         with open('./report.html', 'r') as f:
             file_data = f.read()
         file_data = file_data.replace('$table_json', json.dumps(report))
         with open(file_path, 'w') as f:
             f.write(file_data)
-    return file_path
+    elif file_path.endswith('.json'):
+        with open(file_path, 'w') as f:
+            json.dump(report, f)
+    else:
+        raise RuntimeError('Unexpected report file format')
 
 
 def get_latest_file(file_dir):
@@ -96,11 +111,12 @@ def median(lst):
     lst = sorted(lst)
     n = len(lst)
     if n == 0:
-        return 0
+        result = 0
     elif n % 2 == 1:
-        return lst[n//2]
+        result = lst[n//2]
     else:
-        return (lst[n//2-1] + lst[n//2]) / 2.0
+        result = (lst[n//2-1] + lst[n//2]) / 2.0
+    return result
 
 
 def parse_line(line):
@@ -124,24 +140,61 @@ def xreadlines(log_path):
     log.close()
 
 
-def main():
-    log_file = get_latest_file(config['LOG_DIR'])
+def run_analyze(log_path, is_json):
+    print 'Start reading `%s` log file...' % log_path
     log_stat = collections.defaultdict(list)
     total_count = total_time = 0
-    if log_file:
-        print 'Start reading `%s` log file...' % log_file
-        for line in xreadlines(log_file):
+    report_format = 'html' if is_json is False else 'json'
+    report_name = extract_date_from_file_name(log_path)
+    report_path = '%s/report-%s.%s' % (config['REPORT_DIR'], report_name, report_format)
+    if os.path.isfile(report_path):
+        print 'Report `%s` already exists' % report_path
+        exit(0)
+    try:
+        for line in xreadlines(log_path):
             parsed_line = parse_line(line)
             if parsed_line:
                 total_count += 1
                 total_time += parsed_line['request_time']
                 log_stat[parsed_line['request_url']].append(parsed_line['request_time'])
-        if total_count > 0 and total_time > 0:
-            log_report = get_report(log_stat, total_count, total_time, config['REPORT_SIZE'])
-            report_file = save_report(log_report, config['REPORT_DIR'], extract_date_from_file_name(log_file))
-            print 'Report file `%s` is ready!' % report_file
+    except IOError as err:
+        print str(err)
+        sys.exit(1)
+    if total_count > 0 and total_time > 0:
+        log_report = get_report(log_stat, total_count, total_time, config['REPORT_SIZE'])
+        try:
+            save_report(log_report, report_path)
+        except RuntimeError as err:
+            print str(err)
+            sys.exit(1)
+        print 'Report file `%s` is ready!' % report_path
+    else:
+        print 'Log `%s` data is empty or has incorrect data' % log_path
+
+
+def main():
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], 'hl:j', ['help', 'log_path=', 'json'])
+    except getopt.GetoptError as err:
+        print str(err)
+        usage()
+    log_path = None
+    is_json = False
+    for o, a in opts:
+        if o in ('-h', '--help'):
+            usage()
+        elif o in ("-l", "--log_path"):
+            log_path = a
+        elif o in ("-j", "--json"):
+            is_json = True
         else:
-            print 'Log `%s` data is empty or has incorrect data' % log_file
+            assert False, 'Unhandled Option'
+
+    if log_path is None:
+        log_path = get_latest_file(config['LOG_DIR'])
+
+    if log_path:
+        run_analyze(log_path, is_json)
     else:
         print 'No log files into `%s`' % config['LOG_DIR']
 
