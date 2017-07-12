@@ -145,8 +145,8 @@ def run_analyze(log_path, is_json):
     log_stat = collections.defaultdict(list)
     total_count = total_time = 0
     report_format = 'html' if is_json is False else 'json'
-    report_name = extract_date_from_file_name(log_path)
-    report_path = '%s/report-%s.%s' % (config['REPORT_DIR'], report_name, report_format)
+    report_date = extract_date_from_file_name(log_path)
+    report_path = '%s/report-%s.%s' % (config['REPORT_DIR'], report_date, report_format)
     if os.path.isfile(report_path):
         print 'Report `%s` already exists' % report_path
         exit(0)
