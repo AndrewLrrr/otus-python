@@ -84,10 +84,9 @@ def two_pair(ranks):
     """Если есть две пары, то возврщает два соответствующих ранга,
     иначе возвращает None"""
     pair1 = kind(2, ranks)
-    if pair1 is not None:
-        for rank in ranks:
-            if rank != pair1 and ranks.count(rank) == 2:
-                return [pair1, rank]
+    pair2 = kind(2, list(reversed(ranks)))
+    if pair1 and pair2 and pair1 != pair2:
+        return [pair1, pair2]
     return None
 
 
