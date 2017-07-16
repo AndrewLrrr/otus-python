@@ -143,35 +143,27 @@ def xreadlines(log_path):
 
 
 def run_analyze(log_path, is_json):
-    try:
-        report_format = 'json' if is_json else 'html'
-        report_date = datetime.strftime(get_file_date(log_path), '%Y.%m.%d')
-        report_path = '%s/report-%s.%s' % (CONFIG['REPORT_DIR'], report_date, report_format)
-        if os.path.isfile(report_path):
-            print 'Report `%s` already exists' % report_path
-            exit(0)
-        try:
-            print 'Start reading `%s` log file...' % log_path
-            log_stat = collections.defaultdict(list)
-            total_count = total_time = 0
-            for line in xreadlines(log_path):
-                parsed_line = parse_line(line)
-                if parsed_line:
-                    total_count += 1
-                    total_time += parsed_line['request_time']
-                    log_stat[parsed_line['request_url']].append(parsed_line['request_time'])
-        except IOError as err:
-            print str(err)
-            sys.exit(1)
-        if total_count > 0 and total_time > 0:
-            log_report = get_report(log_stat, total_count, total_time, CONFIG['REPORT_SIZE'])
-            save_report(log_report, report_path)
-            print 'Report file `%s` is ready!' % report_path
-        else:
-            print 'Log `%s` data is empty or has incorrect data' % log_path
-    except Exception as err:
-        print str(err)
-        sys.exit(1)
+    report_format = 'json' if is_json else 'html'
+    report_date = datetime.strftime(get_file_date(log_path), '%Y.%m.%d')
+    report_path = '%s/report-%s.%s' % (CONFIG['REPORT_DIR'], report_date, report_format)
+    if os.path.isfile(report_path):
+        print 'Report `%s` already exists' % report_path
+        exit(0)
+    print 'Start reading `%s` log file...' % log_path
+    log_stat = collections.defaultdict(list)
+    total_count = total_time = 0
+    for line in xreadlines(log_path):
+        parsed_line = parse_line(line)
+        if parsed_line:
+            total_count += 1
+            total_time += parsed_line['request_time']
+            log_stat[parsed_line['request_url']].append(parsed_line['request_time'])
+    if total_count > 0 and total_time > 0:
+        log_report = get_report(log_stat, total_count, total_time, CONFIG['REPORT_SIZE'])
+        save_report(log_report, report_path)
+        print 'Report file `%s` is ready!' % report_path
+    else:
+        print 'Log `%s` data is empty or has incorrect data' % log_path
 
 
 def main():
@@ -182,7 +174,11 @@ def main():
         log_path = get_latest_file(CONFIG['LOG_DIR'])
 
     if log_path:
-        run_analyze(log_path, args.json)
+        try:
+            run_analyze(log_path, args.json)
+        except Exception as err:
+            print str(err)
+            sys.exit(1)
     else:
         print 'No log files into `%s`' % CONFIG['LOG_DIR']
 
