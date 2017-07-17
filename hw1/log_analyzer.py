@@ -83,7 +83,7 @@ def save_report(report, file_path):
 def get_latest_file(file_dir):
     files = glob.glob(file_dir + '/nginx-access-ui.log-*')
     if files:
-        latest_file = max(files, key=lambda f: get_file_date(f))
+        latest_file = max(files, key=get_file_date)
         return latest_file
     return None
 
