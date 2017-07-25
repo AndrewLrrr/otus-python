@@ -145,16 +145,18 @@ class AbstractField(AutoStorage):
         super(AbstractField, self).__init__()
 
     def __get__(self, instance, owner):
-        value = getattr(instance, self.storage_name)
-        if isinstance(value, str):
-            value = value.strip()
-        if value is None and self.required:
+        if not hasattr(instance, self.storage_name) and self.required:
             raise ValueError('Field is required.')
-        elif value in self.empty_values and not self.nullable:
-            raise ValueError('Field not be nullable.')
-        elif value not in self.empty_values:
-            self.validate(value)
-        return super(AbstractField, self).__get__(instance, owner)
+        if hasattr(instance, self.storage_name):
+            value = getattr(instance, self.storage_name)
+            if isinstance(value, str):
+                value = value.strip()
+            if value in self.empty_values and not self.nullable:
+                raise ValueError('Field not be nullable.')
+            elif value not in self.empty_values:
+                self.validate(value)
+            return super(AbstractField, self).__get__(instance, owner)
+        return None
 
     @abstractmethod
     def validate(self, value):
@@ -167,7 +169,7 @@ class CharField(AbstractField):
         self.empty_values = (None, '')
 
     def validate(self, value):
-        if not isinstance(value, str):
+        if not isinstance(value, unicode) and not isinstance(value, str):
             raise ValueError('Field must be a string.')
 
 
@@ -216,7 +218,7 @@ class BirthDayField(CharField):
 class GenderField(AbstractField):
     def validate(self, value):
         if value not in [UNKNOWN, MALE, FEMALE]:
-            raise ValueError('Field value can be only 0, 1 or 2.')
+            raise ValueError('Field value can be only %d, %d or %d and has integer type.' % (UNKNOWN, MALE, FEMALE))
 
 
 class ClientIDsField(AbstractField):
@@ -247,24 +249,26 @@ class Request(object):
         self.fill_fields(**kwargs)
 
     def fill_fields(self, **kwargs):
-        pass
+        for k, v in kwargs.items():
+            if k in self._field_names:
+                self.__class__.__dict__[k].__set__(self, v)
 
-    def is_valid(self):
+    def validate(self):
         errors = []
         for name in self._field_names:
             try:
                 self.__class__.__dict__[name].__get__(self, Request)
             except ValueError as e:
-                errors.append('{}. {}'.format(name, e))
+                errors.append('{}: {}'.format(name, e))
         return errors
 
 
-class ClientsInterestsRequest(object):
+class ClientsInterestsRequest(Request):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
 
-class OnlineScoreRequest(object):
+class OnlineScoreRequest(Request):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -273,7 +277,7 @@ class OnlineScoreRequest(object):
     gender = GenderField(required=False, nullable=True)
 
 
-class MethodRequest(object):
+class MethodRequest(Request):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
@@ -287,7 +291,7 @@ class MethodRequest(object):
 
 def check_auth(request):
     if request.login == ADMIN_LOGIN:
-        digest = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
+        digest = hashlib.sha512(datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
     else:
         digest = hashlib.sha512(request.account + request.login + SALT).hexdigest()
     if digest == request.token:
@@ -296,8 +300,41 @@ def check_auth(request):
 
 
 def method_handler(request, ctx):
-    response, code = None, None
-    return response, code
+    method_request = MethodRequest(**request['body'])
+
+    errors = method_request.validate()
+    if errors:
+        return ', '.join(errors), INVALID_REQUEST
+
+    if not check_auth(method_request):
+        return ERRORS[FORBIDDEN], FORBIDDEN
+
+    method = method_request.method
+
+    if method == 'online_score':
+        online_score_request = OnlineScoreRequest(**method_request.arguments)
+        errors = online_score_request.validate()
+        if errors:
+            return ', '.join(errors), INVALID_REQUEST
+        # phone-email, first name-last name, gender-birthday
+        if (not (online_score_request.email and online_score_request.phone) and
+            not (online_score_request.first_name and online_score_request.last_name) and
+            not (online_score_request.gender and online_score_request.birthday)
+            ):
+                return 'phone-email or first_name-last_name or gender-birthday should be not empty', INVALID_REQUEST
+        if method_request.is_admin:
+            return {'score': 42}, OK
+        return {'score': random.randrange(0, 100)}, OK
+    elif method == 'clients_interests':
+        clients_interests_request = ClientsInterestsRequest(**method_request.arguments)
+        errors = clients_interests_request.validate()
+        if errors:
+            return ', '.join(errors), INVALID_REQUEST
+        interests = {'books', 'hi-tech', 'pets', 'tv', 'travel', 'music', 'cinema', 'geek'}
+        response = {str(i): random.sample(interests, 2) for i in clients_interests_request.client_ids}
+        return response, OK
+
+    return [], OK
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
