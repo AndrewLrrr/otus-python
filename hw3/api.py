@@ -81,13 +81,14 @@
 # Требование: в результате в git должно быть только два(2!) файлика: api.py, test.py.
 # Deadline: следующее занятие
 
-import abc
 import json
 import random
-import datetime
 import logging
 import hashlib
 import uuid
+import re
+from abc import ABCMeta, abstractmethod
+from datetime import datetime
 from optparse import OptionParser
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 
@@ -117,36 +118,145 @@ GENDERS = {
 }
 
 
-class CharField(object):
-    pass
+class AutoStorage(object):
+    __counter = 0
+
+    def __init__(self):
+        cls = self.__class__
+        prefix = cls.__name__
+        index = cls.__counter
+        self.storage_name = '_{}#{}'.format(prefix, index)
+        cls.__counter += 1
+
+    def __get__(self, instance, owner):
+        return getattr(instance, self.storage_name)
+
+    def __set__(self, instance, value):
+        setattr(instance, self.storage_name, value)
 
 
-class ArgumentsField(object):
-    pass
+class AbstractField(AutoStorage):
+    __metaclass__ = ABCMeta
+
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
+        self.empty_values = (None,)
+        super(AbstractField, self).__init__()
+
+    def __get__(self, instance, owner):
+        value = getattr(instance, self.storage_name)
+        if isinstance(value, str):
+            value = value.strip()
+        if value is None and self.required:
+            raise ValueError('Field is required.')
+        elif value in self.empty_values and not self.nullable:
+            raise ValueError('Field not be nullable.')
+        elif value not in self.empty_values:
+            self.validate(value)
+        return super(AbstractField, self).__get__(instance, owner)
+
+    @abstractmethod
+    def validate(self, value):
+        """Validated value and raise ValueError"""
+
+
+class CharField(AbstractField):
+    def __init__(self, **kwargs):
+        super(CharField, self).__init__(**kwargs)
+        self.empty_values = (None, '')
+
+    def validate(self, value):
+        if not isinstance(value, str):
+            raise ValueError('Field must be a string.')
+
+
+class ArgumentsField(AbstractField):
+    def __init__(self, **kwargs):
+        super(ArgumentsField, self).__init__(**kwargs)
+        self.empty_values = (None, {})
+
+    def validate(self, value):
+        if not isinstance(value, dict):
+            raise ValueError('Field must be a dictionary.')
 
 
 class EmailField(CharField):
-    pass
+    def validate(self, value):
+        super(EmailField, self).validate(value)
+        if not re.match(r'(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)', value):
+            raise ValueError('Email address is not valid.')
 
 
-class PhoneField(object):
-    pass
+class PhoneField(CharField):
+    def validate(self, value):
+        super(PhoneField, self).validate(value)
+        if not re.match(r'(^7[\d]{10}$)', value):
+            raise ValueError('Phone is not valid.')
 
 
-class DateField(object):
-    pass
+class DateField(CharField):
+    def validate(self, value):
+        super(DateField, self).validate(value)
+        try:
+            datetime.strptime(value, '%d.%m.%Y')
+        except Exception:
+            raise ValueError('Date is not valid.')
 
 
-class BirthDayField(object):
-    pass
+class BirthDayField(CharField):
+    def validate(self, value):
+        super(BirthDayField, self).validate(value)
+        try:
+            datetime.strptime(value, '%d.%m.%Y')
+        except Exception:
+            raise ValueError('Date is not valid.')
 
 
-class GenderField(object):
-    pass
+class GenderField(AbstractField):
+    def validate(self, value):
+        if value not in [UNKNOWN, MALE, FEMALE]:
+            raise ValueError('Field value can be only 0, 1 or 2.')
 
 
-class ClientIDsField(object):
-    pass
+class ClientIDsField(AbstractField):
+    def __init__(self, **kwargs):
+        super(ClientIDsField, self).__init__(**kwargs)
+        self.empty_values = (None, [])
+
+    def validate(self, value):
+        if not isinstance(value, list):
+            raise ValueError('Field must be a list.')
+
+
+class RequestMeta(type):
+    def __init__(cls, name, bases, attr_dict):
+        super(RequestMeta, cls).__init__(name, bases, attr_dict)
+        cls._field_names = []
+        for key, attr in attr_dict.items():
+            if isinstance(attr, AbstractField):
+                type_name = type(attr).__name__
+                attr.storage_name = '_{}#{}'.format(type_name, key)
+                cls._field_names.append(key)
+
+
+class Request(object):
+    __metaclass__ = RequestMeta
+
+    def __init__(self, **kwargs):
+        self.fill_fields(**kwargs)
+
+    def fill_fields(self, **kwargs):
+        pass
+
+    def is_valid(self):
+        errors = []
+        for name in self._field_names:
+            try:
+                self.__class__.__dict__[name].__get__(self, Request)
+            except ValueError as e:
+                errors.append('{}. {}'.format(name, e))
+        return errors
 
 
 class ClientsInterestsRequest(object):
