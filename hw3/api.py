@@ -141,7 +141,7 @@ class AbstractField(AutoStorage):
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
-        self.empty_values = (None,)
+        self.empty_values = (None, '', [], {}, ())
         super(AbstractField, self).__init__()
 
     def __set__(self, instance, value):
@@ -161,20 +161,12 @@ class AbstractField(AutoStorage):
 
 
 class CharField(AbstractField):
-    def __init__(self, **kwargs):
-        super(CharField, self).__init__(**kwargs)
-        self.empty_values = (None, '')
-
     def validate(self, value):
         if not isinstance(value, unicode) and not isinstance(value, str):
             raise ValueError('Field must be a string.')
 
 
 class ArgumentsField(AbstractField):
-    def __init__(self, **kwargs):
-        super(ArgumentsField, self).__init__(**kwargs)
-        self.empty_values = (None, {})
-
     def validate(self, value):
         if not isinstance(value, dict):
             raise ValueError('Field must be a dictionary.')
