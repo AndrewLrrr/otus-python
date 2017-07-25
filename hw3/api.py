@@ -208,9 +208,13 @@ class DateField(CharField):
 
 class BirthDayField(CharField):
     def validate(self, value):
+        limit_age_years = 70
         super(BirthDayField, self).validate(value)
         try:
-            datetime.strptime(value, '%d.%m.%Y')
+            birthday = datetime.strptime(value, '%d.%m.%Y')
+            current = datetime.now()
+            if current.year - birthday.year > limit_age_years:
+                raise ValueError('Age can not be more than %d years.' % limit_age_years)
         except Exception:
             raise ValueError('Date is not valid.')
 
@@ -224,11 +228,13 @@ class GenderField(AbstractField):
 class ClientIDsField(AbstractField):
     def __init__(self, **kwargs):
         super(ClientIDsField, self).__init__(**kwargs)
-        self.empty_values = (None, [])
+        self.empty_values = (None, [], [0])
 
     def validate(self, value):
         if not isinstance(value, list):
             raise ValueError('Field must be a list.')
+        if not all(isinstance(item, int) for item in value):
+            raise ValueError('All clients ids must be an integer type.')
 
 
 class RequestMeta(type):
@@ -247,20 +253,23 @@ class Request(object):
 
     def __init__(self, **kwargs):
         self.fill_fields(**kwargs)
+        self._errors = []
 
     def fill_fields(self, **kwargs):
         for k, v in kwargs.items():
             if k in self._field_names:
                 self.__class__.__dict__[k].__set__(self, v)
 
-    def validate(self):
-        errors = []
+    def is_valid(self):
         for name in self._field_names:
             try:
                 self.__class__.__dict__[name].__get__(self, Request)
             except ValueError as e:
-                errors.append('{}: {}'.format(name, e))
-        return errors
+                self._errors.append('{}: {}'.format(name, e))
+        return not self._errors
+
+    def get_errors(self):
+        return self._errors
 
 
 class ClientsInterestsRequest(Request):
@@ -302,9 +311,8 @@ def check_auth(request):
 def method_handler(request, ctx):
     method_request = MethodRequest(**request['body'])
 
-    errors = method_request.validate()
-    if errors:
-        return ', '.join(errors), INVALID_REQUEST
+    if not method_request.is_valid():
+        return ', '.join(method_request.get_errors()), INVALID_REQUEST
 
     if not check_auth(method_request):
         return ERRORS[FORBIDDEN], FORBIDDEN
@@ -313,23 +321,21 @@ def method_handler(request, ctx):
 
     if method == 'online_score':
         online_score_request = OnlineScoreRequest(**method_request.arguments)
-        errors = online_score_request.validate()
-        if errors:
-            return ', '.join(errors), INVALID_REQUEST
+        if not online_score_request.is_valid():
+            return ', '.join(online_score_request.get_errors()), INVALID_REQUEST
         # phone-email, first name-last name, gender-birthday
         if (not (online_score_request.email and online_score_request.phone) and
             not (online_score_request.first_name and online_score_request.last_name) and
             not (online_score_request.gender and online_score_request.birthday)
             ):
-                return 'phone-email or first_name-last_name or gender-birthday should be not empty', INVALID_REQUEST
+                return 'Fields phone-email or first_name-last_name or gender-birthday should be not empty', INVALID_REQUEST
         if method_request.is_admin:
             return {'score': 42}, OK
         return {'score': random.randrange(0, 100)}, OK
     elif method == 'clients_interests':
         clients_interests_request = ClientsInterestsRequest(**method_request.arguments)
-        errors = clients_interests_request.validate()
-        if errors:
-            return ', '.join(errors), INVALID_REQUEST
+        if not clients_interests_request.is_valid():
+            return ', '.join(clients_interests_request.get_errors()), INVALID_REQUEST
         interests = {'books', 'hi-tech', 'pets', 'tv', 'travel', 'music', 'cinema', 'geek'}
         response = {str(i): random.sample(interests, 2) for i in clients_interests_request.client_ids}
         return response, OK
