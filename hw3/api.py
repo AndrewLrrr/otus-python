@@ -144,19 +144,16 @@ class AbstractField(AutoStorage):
         self.empty_values = (None,)
         super(AbstractField, self).__init__()
 
-    def __get__(self, instance, owner):
-        if not hasattr(instance, self.storage_name) and self.required:
+    def __set__(self, instance, value):
+        if isinstance(value, str):
+            value = value.strip()
+        if value is None and self.required:
             raise ValueError('Field is required.')
-        if hasattr(instance, self.storage_name):
-            value = getattr(instance, self.storage_name)
-            if isinstance(value, str):
-                value = value.strip()
-            if value in self.empty_values and not self.nullable:
-                raise ValueError('Field not be nullable.')
-            elif value not in self.empty_values:
-                self.validate(value)
-            return super(AbstractField, self).__get__(instance, owner)
-        return None
+        elif value in self.empty_values and not self.nullable:
+            raise ValueError('Field not be nullable.')
+        elif value not in self.empty_values:
+            self.validate(value)
+        return super(AbstractField, self).__set__(instance, value)
 
     @abstractmethod
     def validate(self, value):
@@ -190,10 +187,9 @@ class EmailField(CharField):
             raise ValueError('Email address is not valid.')
 
 
-class PhoneField(CharField):
+class PhoneField(AbstractField):
     def validate(self, value):
-        super(PhoneField, self).validate(value)
-        if not re.match(r'(^7[\d]{10}$)', value):
+        if not re.match(r'(^7[\d]{10}$)', str(value)):
             raise ValueError('Phone is not valid.')
 
 
@@ -228,7 +224,7 @@ class GenderField(AbstractField):
 class ClientIDsField(AbstractField):
     def __init__(self, **kwargs):
         super(ClientIDsField, self).__init__(**kwargs)
-        self.empty_values = (None, [], [0])
+        self.empty_values = (None, [])
 
     def validate(self, value):
         if not isinstance(value, list):
@@ -252,24 +248,28 @@ class Request(object):
     __metaclass__ = RequestMeta
 
     def __init__(self, **kwargs):
-        self.fill_fields(**kwargs)
         self._errors = []
+        self.fill_fields(**kwargs)
 
     def fill_fields(self, **kwargs):
+        # Add to kwargs unsent request fields with default None value
+        unsent_fields = set(self._field_names) - set(kwargs.keys())
+        kwargs.update({k: None for k in unsent_fields})
         for k, v in kwargs.items():
             if k in self._field_names:
-                self.__class__.__dict__[k].__set__(self, v)
+                try:
+                    self.__class__.__dict__[k].__set__(self, v)
+                except ValueError as e:
+                    self._errors.append('{}: {}'.format(k, e))
 
     def is_valid(self):
-        for name in self._field_names:
-            try:
-                self.__class__.__dict__[name].__get__(self, Request)
-            except ValueError as e:
-                self._errors.append('{}: {}'.format(name, e))
         return not self._errors
 
     def get_errors(self):
         return self._errors
+
+    def get_not_empty_fields(self):
+        return [i for i in self._field_names if self.__class__.__dict__[i].__get__(self, Request) not in (None, '', [], {})]
 
 
 class ClientsInterestsRequest(Request):
@@ -326,9 +326,10 @@ def method_handler(request, ctx):
         # phone-email, first name-last name, gender-birthday
         if (not (online_score_request.email and online_score_request.phone) and
             not (online_score_request.first_name and online_score_request.last_name) and
-            not (online_score_request.gender and online_score_request.birthday)
+            not (online_score_request.gender is not None and online_score_request.birthday)
             ):
                 return 'Fields phone-email or first_name-last_name or gender-birthday should be not empty', INVALID_REQUEST
+        ctx['has'] = online_score_request.get_not_empty_fields()
         if method_request.is_admin:
             return {'score': 42}, OK
         return {'score': random.randrange(0, 100)}, OK
@@ -338,6 +339,7 @@ def method_handler(request, ctx):
             return ', '.join(clients_interests_request.get_errors()), INVALID_REQUEST
         interests = {'books', 'hi-tech', 'pets', 'tv', 'travel', 'music', 'cinema', 'geek'}
         response = {str(i): random.sample(interests, 2) for i in clients_interests_request.client_ids}
+        ctx['nclients'] = len(clients_interests_request.client_ids)
         return response, OK
 
     return [], OK
