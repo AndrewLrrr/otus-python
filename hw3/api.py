@@ -218,10 +218,6 @@ class GenderField(AbstractField):
 
 
 class ClientIDsField(AbstractField):
-    def __init__(self, **kwargs):
-        super(ClientIDsField, self).__init__(**kwargs)
-        self.empty_values = (None, [])
-
     def validate(self, value):
         if not isinstance(value, list):
             raise ValueError('Field must be a list.')
