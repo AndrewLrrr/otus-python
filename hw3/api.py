@@ -129,7 +129,10 @@ class AutoStorage(object):
         cls.__counter += 1
 
     def __get__(self, instance, owner):
-        return getattr(instance, self.storage_name)
+        if instance is None:
+            return self
+        else:
+            return getattr(instance, self.storage_name)
 
     def __set__(self, instance, value):
         setattr(instance, self.storage_name, value)
@@ -138,26 +141,32 @@ class AutoStorage(object):
 class AbstractField(AutoStorage):
     __metaclass__ = ABCMeta
 
+    # Declare types explicitly to avoid false positives for 0 and more flexibility
+    empty_values = (None, '', [], {}, ())
+
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
-        self.empty_values = (None, '', [], {}, ())
         super(AbstractField, self).__init__()
 
+    # Add check attribute existing here to comply with single responsibility principle of base class
+    def __get__(self, instance, owner):
+        if hasattr(instance, self.storage_name):
+            return super(AbstractField, self).__get__(instance, owner)
+        return None
+
     def __set__(self, instance, value):
-        if isinstance(value, str):
-            value = value.strip()
         if value is None and self.required:
             raise ValueError('Field is required.')
         elif value in self.empty_values and not self.nullable:
             raise ValueError('Field not be nullable.')
-        elif value not in self.empty_values:
+        elif value:
             self.validate(value)
         return super(AbstractField, self).__set__(instance, value)
 
     @abstractmethod
     def validate(self, value):
-        """Validated value and raise ValueError"""
+        """Raise ValueError if field has incorrect data"""
 
 
 class CharField(AbstractField):
@@ -172,10 +181,9 @@ class ArgumentsField(AbstractField):
             raise ValueError('Field must be a dictionary.')
 
 
-class EmailField(CharField):
+class EmailField(AbstractField):
     def validate(self, value):
-        super(EmailField, self).validate(value)
-        if not re.match(r'(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)', value):
+        if not re.match(r'(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)', str(value)):
             raise ValueError('Email address is not valid.')
 
 
@@ -185,32 +193,30 @@ class PhoneField(AbstractField):
             raise ValueError('Phone is not valid.')
 
 
-class DateField(CharField):
+class DateField(AbstractField):
     def validate(self, value):
-        super(DateField, self).validate(value)
         try:
             datetime.strptime(value, '%d.%m.%Y')
         except Exception:
             raise ValueError('Date is not valid.')
 
 
-class BirthDayField(CharField):
+class BirthDayField(AbstractField):
     def validate(self, value):
         limit_age_years = 70
-        super(BirthDayField, self).validate(value)
         try:
             birthday = datetime.strptime(value, '%d.%m.%Y')
-            current = datetime.now()
-            if current.year - birthday.year > limit_age_years:
-                raise ValueError('Age can not be more than %d years.' % limit_age_years)
         except Exception:
             raise ValueError('Date is not valid.')
+        current = datetime.now()
+        if current.year - birthday.year > limit_age_years:
+            raise ValueError('Age can not be more than {} years.'.format(limit_age_years))
 
 
 class GenderField(AbstractField):
     def validate(self, value):
         if value not in [UNKNOWN, MALE, FEMALE]:
-            raise ValueError('Field value can be only %d, %d or %d and has integer type.' % (UNKNOWN, MALE, FEMALE))
+            raise ValueError('Field value can be only {}, {} or {} and has integer type.'.format(UNKNOWN, MALE, FEMALE))
 
 
 class ClientIDsField(AbstractField):
@@ -226,6 +232,8 @@ class ClientIDsField(AbstractField):
 
 
 class RequestMeta(type):
+    """Metaclass for request entities with validated fields"""
+
     def __init__(cls, name, bases, attr_dict):
         super(RequestMeta, cls).__init__(name, bases, attr_dict)
         cls._field_names = []
@@ -241,9 +249,9 @@ class Request(object):
 
     def __init__(self, **kwargs):
         self._errors = []
-        self.fill_fields(**kwargs)
+        self._fill_fields(**kwargs)
 
-    def fill_fields(self, **kwargs):
+    def _fill_fields(self, **kwargs):
         # Add to kwargs unsent request fields with default None value
         unsent_fields = set(self._field_names) - set(kwargs.keys())
         kwargs.update({k: None for k in unsent_fields})
@@ -261,7 +269,7 @@ class Request(object):
         return self._errors
 
     def get_not_empty_fields(self):
-        return [i for i in self._field_names if self.__class__.__dict__[i].__get__(self, Request) not in (None, '', [], {})]
+        return [i for i in self._field_names if self.__class__.__dict__[i].__get__(self, Request) not in AbstractField.empty_values]
 
 
 class ClientsInterestsRequest(Request):
@@ -270,12 +278,25 @@ class ClientsInterestsRequest(Request):
 
 
 class OnlineScoreRequest(Request):
+    _pairs = (
+        ('phone', 'email'),
+        ('first_name', 'last_name'),
+        ('gender', 'birthday'),
+    )
+
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
     phone = PhoneField(required=False, nullable=True)
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
+
+    def _fill_fields(self, **kwargs):
+        super(OnlineScoreRequest, self)._fill_fields(**kwargs)
+        not_empty_fields = set(self.get_not_empty_fields())
+        result = any([not_empty_fields.issuperset(pair) for pair in self._pairs])
+        if not result:
+            self._errors.append('Pairs {} should be not empty'.format(' or '.join(str(pair) for pair in self._pairs)))
 
 
 class MethodRequest(Request):
@@ -315,12 +336,6 @@ def method_handler(request, ctx):
         online_score_request = OnlineScoreRequest(**method_request.arguments)
         if not online_score_request.is_valid():
             return ', '.join(online_score_request.get_errors()), INVALID_REQUEST
-        # phone-email, first name-last name, gender-birthday
-        if (not (online_score_request.email and online_score_request.phone) and
-            not (online_score_request.first_name and online_score_request.last_name) and
-            not (online_score_request.gender is not None and online_score_request.birthday)
-            ):
-                return 'Fields phone-email or first_name-last_name or gender-birthday should be not empty', INVALID_REQUEST
         ctx['has'] = online_score_request.get_not_empty_fields()
         if method_request.is_admin:
             return {'score': 42}, OK
