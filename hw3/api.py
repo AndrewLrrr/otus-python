@@ -201,13 +201,11 @@ class DateField(AbstractField):
             raise ValueError('Date is not valid.')
 
 
-class BirthDayField(AbstractField):
+class BirthDayField(DateField):
     def validate(self, value):
+        super(BirthDayField, self).validate(value)
         limit_age_years = 70
-        try:
-            birthday = datetime.strptime(value, '%d.%m.%Y')
-        except Exception:
-            raise ValueError('Date is not valid.')
+        birthday = datetime.strptime(value, '%d.%m.%Y')
         current = datetime.now()
         if current.year - birthday.year > limit_age_years:
             raise ValueError('Age can not be more than {} years.'.format(limit_age_years))
