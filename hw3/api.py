@@ -118,37 +118,14 @@ GENDERS = {
 }
 
 
-#  ------------------------------------ Field classes ------------------------------------ #
+# -------------------------------------------------- Field classes --------------------------------------------------- #
 
 class AbstractField(object):
     __metaclass__ = ABCMeta
 
-    # Declare types explicitly to avoid false positives for 0 and more flexibility
-    empty_values = (None, '', [], {}, ())
-    __counter = 0
-
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
-        cls = self.__class__
-        prefix = cls.__name__
-        index = cls.__counter
-        self.storage_name = '_{}#{}'.format(prefix, index)
-        cls.__counter += 1
-
-    def __get__(self, instance, owner):
-        if hasattr(instance, self.storage_name):
-            return getattr(instance, self.storage_name)
-        return None
-
-    def __set__(self, instance, value):
-        if value is None and self.required:
-            raise ValueError('Field is required.')
-        elif value in self.empty_values and not self.nullable:
-            raise ValueError('Field not be nullable.')
-        elif value:
-            value = self.parse_and_validate(value)
-        return setattr(instance, self.storage_name, value)
 
     @abstractmethod
     def parse_and_validate(self, value):
@@ -157,7 +134,7 @@ class AbstractField(object):
 
 class CharField(AbstractField):
     def parse_and_validate(self, value):
-        if not isinstance(value, unicode) and not isinstance(value, str):
+        if not isinstance(value, (str, unicode)):
             raise ValueError('Field must be a string.')
         return value
 
@@ -218,51 +195,67 @@ class ClientIDsField(AbstractField):
         return value
 
 
-#  ----------------------------------- Request classes ----------------------------------- #
+# -------------------------------------------------- Request classes ------------------------------------------------- #
 
-class RequestMeta(type):
+class MetaRequest(type):
     """Metaclass for request entities with validated fields"""
 
     def __init__(cls, name, bases, attr_dict):
-        super(RequestMeta, cls).__init__(name, bases, attr_dict)
+        super(MetaRequest, cls).__init__(name, bases, attr_dict)
         cls.fields = []
         for key, attr in attr_dict.items():
             if isinstance(attr, AbstractField):
-                type_name = type(attr).__name__
-                attr.storage_name = '_{}#{}'.format(type_name, key)
-                cls.fields.append(key)
+                attr.name = key
+                cls.fields.append(attr)
 
 
 class Request(object):
-    __metaclass__ = RequestMeta
+    __metaclass__ = MetaRequest
+
+    empty_values = (None, '', [], {}, ())
 
     def __init__(self, request):
         self._errors = []
-        self._fill_fields(**request)
+        self._has_errors = True
+        self.request = request
 
-    def _fill_fields(self, **kwargs):
-        # Add to kwargs unsent request fields with default None value
-        unsent_fields = set(self.fields) - set(kwargs.keys())
-        kwargs.update({k: None for k in unsent_fields})
-        for k, v in kwargs.items():
-            if k in self.fields:
-                try:
-                    setattr(self, k, v)
-                except ValueError as e:
-                    self._errors.append('{}: {}'.format(k, e))
+    def clean(self):
+        for field in self.fields:
+            value = None
+            try:
+                value = self.request[field.name]
+            except (KeyError, TypeError):
+                if field.required:
+                    self._errors.append(self.error_str(field, 'Field is required.'))
+                    continue
+            if value in self.empty_values and not field.nullable:
+                self._errors.append(self.error_str(field, 'Field not be nullable.'))
+            try:
+                if value not in self.empty_values:
+                    value = field.parse_and_validate(value)
+                    setattr(self, field.name, value)
+            except ValueError as e:
+                self._errors.append(self.error_str(field, e))
+        return self._errors
 
     def is_valid(self):
-        return not self._errors
+        if self._has_errors:
+            self._has_errors = not self.clean()
+        return self._has_errors
 
-    def get_error(self):
+    def error_message(self):
         return ', '.join(self._errors)
 
     def get_not_empty_fields(self):
         fields = []
         for field in self.fields:
-            if getattr(self, field) not in AbstractField.empty_values:
-                fields.append(field)
+            if field.name in self.request not in self.empty_values:
+                fields.append(field.name)
         return fields
+
+    @staticmethod
+    def error_str(field, message):
+        return '{}: {}'.format(field.name, message)
 
 
 class ClientsInterestsRequest(Request):
@@ -284,12 +277,13 @@ class OnlineScoreRequest(Request):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def _fill_fields(self, **kwargs):
-        super(OnlineScoreRequest, self)._fill_fields(**kwargs)
+    def clean(self):
+        self._errors = super(OnlineScoreRequest, self).clean()
         not_empty_fields = set(self.get_not_empty_fields())
         result = any([not_empty_fields.issuperset(pair) for pair in self._pairs])
         if not result:
             self._errors.append('Pairs {} should be not empty'.format(' or '.join(str(pair) for pair in self._pairs)))
+        return self._errors
 
 
 class MethodRequest(Request):
@@ -304,9 +298,9 @@ class MethodRequest(Request):
         return self.login == ADMIN_LOGIN
 
 
-# ------------------------------- Request handlers classes ------------------------------- #
+# --------------------------------------------- Request handlers classes --------------------------------------------- #
 
-class RequestHandler(object):
+class AbstractRequestHandler(object):
     __metaclass__ = ABCMeta
 
     def __init__(self, request, ctx):
@@ -318,39 +312,39 @@ class RequestHandler(object):
         """ Create request entity here """
 
     @abstractmethod
-    def processing_handler(self, request_data):
+    def processing_handler(self, request_type):
         """ Logic of processing the request """
 
     def run_processing(self, data):
-        request_data = self.init_request(data)
-        if not request_data.is_valid():
-            return request_data.get_error(), INVALID_REQUEST
-        return self.processing_handler(request_data)
+        request_type = self.init_request(data)
+        if not request_type.is_valid():
+            return request_type.error_message(), INVALID_REQUEST
+        return self.processing_handler(request_type)
 
 
-class OnlineScoreRequestHandler(RequestHandler):
+class OnlineScoreRequestHandler(AbstractRequestHandler):
     def init_request(self, data):
         return OnlineScoreRequest(data)
 
-    def processing_handler(self, request_data):
-        self.ctx['has'] = request_data.get_not_empty_fields()
+    def processing_handler(self, request_type):
+        self.ctx['has'] = request_type.get_not_empty_fields()
         if self.request.is_admin:
             return {'score': 42}, OK
         return {'score': random.randrange(0, 100)}, OK
 
 
-class ClientsInterestsRequestHandler(RequestHandler):
+class ClientsInterestsRequestHandler(AbstractRequestHandler):
     def init_request(self, data):
         return ClientsInterestsRequest(data)
 
-    def processing_handler(self, request_data):
+    def processing_handler(self, request_type):
         interests = {'books', 'hi-tech', 'pets', 'tv', 'travel', 'music', 'cinema', 'geek'}
-        response = {i: random.sample(interests, 2) for i in request_data.client_ids}
-        self.ctx['nclients'] = len(request_data.client_ids)
+        response = {i: random.sample(interests, 2) for i in request_type.client_ids}
+        self.ctx['nclients'] = len(request_type.client_ids)
         return response, OK
 
 
-# ---------------------------------- Base homework part ---------------------------------- #
+# ------------------------------------------------ Base homework part ------------------------------------------------ #
 
 def check_auth(request):
     if request.login == ADMIN_LOGIN:
@@ -371,10 +365,13 @@ def method_handler(request, ctx):
     request = MethodRequest(request['body'])
 
     if not request.is_valid():
-        return request.get_error(), INVALID_REQUEST
+        return request.error_message(), INVALID_REQUEST
 
     if not check_auth(request):
         return None, FORBIDDEN
+
+    if not isinstance(request.arguments, dict):
+        return 'Method arguments must be a dictionary', INVALID_REQUEST
 
     if request.method not in handlers:
         return None, NOT_FOUND
