@@ -118,10 +118,18 @@ GENDERS = {
 }
 
 
-class AutoStorage(object):
+#  ------------------------------------ Field classes ------------------------------------ #
+
+class AbstractField(object):
+    __metaclass__ = ABCMeta
+
+    # Declare types explicitly to avoid false positives for 0 and more flexibility
+    empty_values = (None, '', [], {}, ())
     __counter = 0
 
-    def __init__(self):
+    def __init__(self, required=False, nullable=False):
+        self.required = required
+        self.nullable = nullable
         cls = self.__class__
         prefix = cls.__name__
         index = cls.__counter
@@ -129,30 +137,8 @@ class AutoStorage(object):
         cls.__counter += 1
 
     def __get__(self, instance, owner):
-        if instance is None:
-            return self
-        else:
-            return getattr(instance, self.storage_name)
-
-    def __set__(self, instance, value):
-        setattr(instance, self.storage_name, value)
-
-
-class AbstractField(AutoStorage):
-    __metaclass__ = ABCMeta
-
-    # Declare types explicitly to avoid false positives for 0 and more flexibility
-    empty_values = (None, '', [], {}, ())
-
-    def __init__(self, required=False, nullable=False):
-        self.required = required
-        self.nullable = nullable
-        super(AbstractField, self).__init__()
-
-    # Add check attribute existing here to comply with single responsibility principle of base class
-    def __get__(self, instance, owner):
         if hasattr(instance, self.storage_name):
-            return super(AbstractField, self).__get__(instance, owner)
+            return getattr(instance, self.storage_name)
         return None
 
     def __set__(self, instance, value):
@@ -161,109 +147,122 @@ class AbstractField(AutoStorage):
         elif value in self.empty_values and not self.nullable:
             raise ValueError('Field not be nullable.')
         elif value:
-            self.validate(value)
-        return super(AbstractField, self).__set__(instance, value)
+            value = self.parse_and_validate(value)
+        return setattr(instance, self.storage_name, value)
 
     @abstractmethod
-    def validate(self, value):
-        """Raise ValueError if field has incorrect data"""
+    def parse_and_validate(self, value):
+        """Return parsed field value or raise ValueError exception"""
 
 
 class CharField(AbstractField):
-    def validate(self, value):
+    def parse_and_validate(self, value):
         if not isinstance(value, unicode) and not isinstance(value, str):
             raise ValueError('Field must be a string.')
+        return value
 
 
 class ArgumentsField(AbstractField):
-    def validate(self, value):
+    def parse_and_validate(self, value):
         if not isinstance(value, dict):
             raise ValueError('Field must be a dictionary.')
+        return value
 
 
 class EmailField(AbstractField):
-    def validate(self, value):
+    def parse_and_validate(self, value):
         if not re.match(r'(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)', str(value)):
             raise ValueError('Email address is not valid.')
+        return value
 
 
 class PhoneField(AbstractField):
-    def validate(self, value):
+    def parse_and_validate(self, value):
         if not re.match(r'(^7[\d]{10}$)', str(value)):
             raise ValueError('Phone is not valid.')
+        return value
 
 
 class DateField(AbstractField):
-    def validate(self, value):
+    def parse_and_validate(self, value):
         try:
-            datetime.strptime(value, '%d.%m.%Y')
+            value = datetime.strptime(value, '%d.%m.%Y')
         except Exception:
             raise ValueError('Date is not valid.')
+        return value
 
 
 class BirthDayField(DateField):
-    def validate(self, value):
-        super(BirthDayField, self).validate(value)
+    def parse_and_validate(self, value):
+        value = super(BirthDayField, self).parse_and_validate(value)
         limit_age_years = 70
-        birthday = datetime.strptime(value, '%d.%m.%Y')
         current = datetime.now()
-        if current.year - birthday.year > limit_age_years:
+        if current.year - value.year > limit_age_years:
             raise ValueError('Age can not be more than {} years.'.format(limit_age_years))
+        return value
 
 
 class GenderField(AbstractField):
-    def validate(self, value):
+    def parse_and_validate(self, value):
         if value not in [UNKNOWN, MALE, FEMALE]:
             raise ValueError('Field value can be only {}, {} or {} and has integer type.'.format(UNKNOWN, MALE, FEMALE))
+        return value
 
 
 class ClientIDsField(AbstractField):
-    def validate(self, value):
+    def parse_and_validate(self, value):
         if not isinstance(value, list):
             raise ValueError('Field must be a list.')
         if not all(isinstance(item, int) for item in value):
             raise ValueError('All clients ids must be an integer type.')
+        return value
 
+
+#  ----------------------------------- Request classes ----------------------------------- #
 
 class RequestMeta(type):
     """Metaclass for request entities with validated fields"""
 
     def __init__(cls, name, bases, attr_dict):
         super(RequestMeta, cls).__init__(name, bases, attr_dict)
-        cls._field_names = []
+        cls.fields = []
         for key, attr in attr_dict.items():
             if isinstance(attr, AbstractField):
                 type_name = type(attr).__name__
                 attr.storage_name = '_{}#{}'.format(type_name, key)
-                cls._field_names.append(key)
+                cls.fields.append(key)
 
 
 class Request(object):
     __metaclass__ = RequestMeta
 
-    def __init__(self, **kwargs):
+    def __init__(self, request):
         self._errors = []
-        self._fill_fields(**kwargs)
+        self._fill_fields(**request)
 
     def _fill_fields(self, **kwargs):
         # Add to kwargs unsent request fields with default None value
-        unsent_fields = set(self._field_names) - set(kwargs.keys())
+        unsent_fields = set(self.fields) - set(kwargs.keys())
         kwargs.update({k: None for k in unsent_fields})
         for k, v in kwargs.items():
-            if k in self._field_names:
+            if k in self.fields:
                 try:
-                    self.__class__.__dict__[k].__set__(self, v)
+                    setattr(self, k, v)
                 except ValueError as e:
                     self._errors.append('{}: {}'.format(k, e))
 
     def is_valid(self):
         return not self._errors
 
-    def get_errors(self):
-        return self._errors
+    def get_error(self):
+        return ', '.join(self._errors)
 
     def get_not_empty_fields(self):
-        return [i for i in self._field_names if self.__class__.__dict__[i].__get__(self, Request) not in AbstractField.empty_values]
+        fields = []
+        for field in self.fields:
+            if getattr(self, field) not in AbstractField.empty_values:
+                fields.append(field)
+        return fields
 
 
 class ClientsInterestsRequest(Request):
@@ -305,6 +304,54 @@ class MethodRequest(Request):
         return self.login == ADMIN_LOGIN
 
 
+# ------------------------------- Request handlers classes ------------------------------- #
+
+class RequestHandler(object):
+    __metaclass__ = ABCMeta
+
+    def __init__(self, request, ctx):
+        self.request = request
+        self.ctx = ctx
+
+    @abstractmethod
+    def init_request(self, data):
+        """ Create request entity here """
+
+    @abstractmethod
+    def processing_handler(self, request_data):
+        """ Logic of processing the request """
+
+    def run_processing(self, data):
+        request_data = self.init_request(data)
+        if not request_data.is_valid():
+            return request_data.get_error(), INVALID_REQUEST
+        return self.processing_handler(request_data)
+
+
+class OnlineScoreRequestHandler(RequestHandler):
+    def init_request(self, data):
+        return OnlineScoreRequest(data)
+
+    def processing_handler(self, request_data):
+        self.ctx['has'] = request_data.get_not_empty_fields()
+        if self.request.is_admin:
+            return {'score': 42}, OK
+        return {'score': random.randrange(0, 100)}, OK
+
+
+class ClientsInterestsRequestHandler(RequestHandler):
+    def init_request(self, data):
+        return ClientsInterestsRequest(data)
+
+    def processing_handler(self, request_data):
+        interests = {'books', 'hi-tech', 'pets', 'tv', 'travel', 'music', 'cinema', 'geek'}
+        response = {i: random.sample(interests, 2) for i in request_data.client_ids}
+        self.ctx['nclients'] = len(request_data.client_ids)
+        return response, OK
+
+
+# ---------------------------------- Base homework part ---------------------------------- #
+
 def check_auth(request):
     if request.login == ADMIN_LOGIN:
         digest = hashlib.sha512(datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
@@ -316,34 +363,23 @@ def check_auth(request):
 
 
 def method_handler(request, ctx):
-    method_request = MethodRequest(**request['body'])
+    handlers = {
+        'online_score': OnlineScoreRequestHandler,
+        'clients_interests': ClientsInterestsRequestHandler
+    }
 
-    if not method_request.is_valid():
-        return ', '.join(method_request.get_errors()), INVALID_REQUEST
+    request = MethodRequest(request['body'])
 
-    if not check_auth(method_request):
-        return ERRORS[FORBIDDEN], FORBIDDEN
+    if not request.is_valid():
+        return request.get_error(), INVALID_REQUEST
 
-    method = method_request.method
+    if not check_auth(request):
+        return None, FORBIDDEN
 
-    if method == 'online_score':
-        online_score_request = OnlineScoreRequest(**method_request.arguments)
-        if not online_score_request.is_valid():
-            return ', '.join(online_score_request.get_errors()), INVALID_REQUEST
-        ctx['has'] = online_score_request.get_not_empty_fields()
-        if method_request.is_admin:
-            return {'score': 42}, OK
-        return {'score': random.randrange(0, 100)}, OK
-    elif method == 'clients_interests':
-        clients_interests_request = ClientsInterestsRequest(**method_request.arguments)
-        if not clients_interests_request.is_valid():
-            return ', '.join(clients_interests_request.get_errors()), INVALID_REQUEST
-        interests = {'books', 'hi-tech', 'pets', 'tv', 'travel', 'music', 'cinema', 'geek'}
-        response = {str(i): random.sample(interests, 2) for i in clients_interests_request.client_ids}
-        ctx['nclients'] = len(clients_interests_request.client_ids)
-        return response, OK
+    if request.method not in handlers:
+        return None, NOT_FOUND
 
-    return [], OK
+    return handlers[request.method](request, ctx).run_processing(request.arguments)
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
