@@ -165,9 +165,9 @@ class SimpleHttpRequestHandler(object):
 class SimpleHTTPServer(object):
     request_queue_size = 5
 
-    def __init__(self, port, host, request_handler, timeout=None, sock=None):
-        self.port = port
+    def __init__(self, host, port, request_handler, timeout=None, sock=None):
         self.host = host
+        self.port = port
         self.request_handler = request_handler
         self.timeout = timeout
         self.sock = sock
@@ -180,7 +180,7 @@ class SimpleHTTPServer(object):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             if self.timeout:
                 s.settimeout(self.timeout)
-            s.bind((self.port, self.host))
+            s.bind((self.host, self.port))
             s.listen(self.request_queue_size)
         except socket.error as e:
             raise RuntimeError(e)
