@@ -39,7 +39,7 @@ SERVER_VERSION = 'OtusServer'
 PROTOCOL_VERSION = 'HTTP/1.1'
 
 
-class SimpleHttpRequestHandler(object):
+class SimpleHTTPRequestHandler(object):
     root = 'http'
     index_file = 'index.html'
 
@@ -213,7 +213,7 @@ def run_server(host, port, workers, debug):
     signal.signal(signal.SIGINT, interrupt_signal)
 
     for i in range(workers):
-        server = SimpleHTTPServer(host, port, SimpleHttpRequestHandler)
+        server = SimpleHTTPServer(host, port, SimpleHTTPRequestHandler)
         p = multiprocessing.Process(target=server.serve_forever)
         processes.append(p)
         logging.basicConfig(level=(logging.DEBUG if debug else logging.ERROR))
