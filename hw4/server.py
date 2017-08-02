@@ -46,7 +46,7 @@ PROTOCOL_VERSION = 'HTTP/1.1'
 
 
 class SimpleHTTPRequestHandler(object):
-    root = 'http'
+    document_root = 'http'
     index_file = 'index.html'
 
     def __init__(self, connection, client_address):
@@ -54,7 +54,6 @@ class SimpleHTTPRequestHandler(object):
         self.path = None
         self.body = ''
         self.is_directory = False
-        self.document_root = os.path.realpath(self.root)
         self.response_headers = {}
         self.request_headers = {}
         self.connection = connection
@@ -192,5 +191,3 @@ class SimpleHTTPThreadingServer(object):
                 logging.debug('Request handler running on thread: %s | P: %s', t.name, multiprocessing.current_process().name)
             except socket.error:
                 self.sock.close()
-
-
