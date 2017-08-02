@@ -11,6 +11,21 @@
 
 `HTTPRequestHandler` - принимает запрос, парсит заголовки, форирует и возвращает ответ.
 
+### Описание
+```
+usage: httpd.py [-h] [-s HOST] [-p PORT] [-w WORKERS] [-d]
+
+Otus Web Server
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -s HOST, --host HOST  Host
+  -p PORT, --port PORT  Port
+  -w WORKERS, --workers WORKERS
+                        Count of workers
+  -d, --debug           Show debug messages
+```
+
 ### Тестирование
 Тестирование осуществлялось на виртуальной машине со следующими характеристиками:
 

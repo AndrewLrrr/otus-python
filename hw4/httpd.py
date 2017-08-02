@@ -37,10 +37,10 @@ def run_server(host, port, workers, debug):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Otus Web Server')
-    parser.add_argument('-s', '--host', default='127.0.0.1')
-    parser.add_argument('-p', '--port', default=8080)
-    parser.add_argument('-w', '--workers', default=2)
-    parser.add_argument('-d', '--debug', action='store_true')
+    parser.add_argument('-s', '--host', default='127.0.0.1', help='Host')
+    parser.add_argument('-p', '--port', default=8080, help='Port')
+    parser.add_argument('-w', '--workers', default=2, help='Count of workers')
+    parser.add_argument('-d', '--debug', action='store_true', help='Show debug messages')
     args = parser.parse_args()
 
     run_server(args.host, int(args.port), int(args.workers), args.debug)
