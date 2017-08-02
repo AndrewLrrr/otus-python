@@ -4,10 +4,9 @@
 import argparse
 import multiprocessing
 import signal
-
 import logging
 
-from server import SimpleHTTPRequestHandler, SimpleHTTPServer
+from server import SimpleHTTPRequestHandler, SimpleHTTPThreadingServer
 
 
 def run_server(host, port, workers, debug):
@@ -25,7 +24,7 @@ def run_server(host, port, workers, debug):
     signal.signal(signal.SIGINT, interrupt_signal)
 
     for i in range(workers):
-        server = SimpleHTTPServer(host, port, SimpleHTTPRequestHandler)
+        server = SimpleHTTPThreadingServer(host, port, SimpleHTTPRequestHandler)
         p = multiprocessing.Process(target=server.serve_forever)
         processes.append(p)
         logging.basicConfig(level=(logging.DEBUG if debug else logging.ERROR))

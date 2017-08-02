@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import SocketServer
+
 import multiprocessing
 import os
 import socket
@@ -65,7 +65,7 @@ class SimpleHTTPRequestHandler(object):
             self.finish()
 
     def do_GET(self):
-        logging.debug('Send file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
+        logging.debug('Get file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
         status = self.set_head()
         if status == OK:
             return self.send_response(self.set_body())
@@ -160,35 +160,6 @@ class SimpleHTTPRequestHandler(object):
     @staticmethod
     def date_time_string():
         return strftime('%a, %d %b %Y %H:%M:%S GMT', gmtime())
-
-
-class SimpleHTTPServer(object):
-    request_queue_size = 5
-
-    def __init__(self, host, port, request_handler):
-        self.sock = None
-        self.host = host
-        self.port = port
-        self.request_handler = request_handler
-        self.create_socket()
-
-    def create_socket(self):
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            self.sock.bind((self.host, self.port))
-            self.sock.listen(self.request_queue_size)
-        except socket.error as e:
-            raise RuntimeError(e)
-
-    def serve_forever(self):
-        while True:
-            try:
-                conn, addr = self.sock.accept()
-                logging.debug('Connected | P: %s | PID: %d', multiprocessing.current_process().name, os.getpid())
-                self.request_handler(conn, addr)
-            except socket.error:
-                self.sock.close()
 
 
 class SimpleHTTPThreadingServer(object):
