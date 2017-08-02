@@ -97,14 +97,15 @@ class HTTPRequestHandler(object):
         first_line = request_lines[0].split()
         if len(first_line) != 3:
             return BAD_REQUEST
-        method, url, version = request_lines[0].split()
+        method, url, version = first_line
         if method not in ALLOWED_METHODS:
             return NOT_ALLOWED
         del request_lines[0]
         for line in request_lines:
-            if line.split():
-                k, v = line.split(':', 1)
-                self.request_headers[k.lower()] = v.strip()
+            if not line.split():
+                break
+            k, v = line.split(':', 1)
+            self.request_headers[k.lower()] = v.strip()
         logging.debug('Request url | P: %s | Url: %s', multiprocessing.current_process().name, url)
         parsed_url = urlparse(url)
         parsed_path = urllib.unquote(parsed_url.path).decode('utf8')
@@ -135,7 +136,7 @@ class HTTPRequestHandler(object):
                 fs = os.path.getsize(self.path)
             except os.error:
                 return NOT_ALLOWED
-            self.set_header('Content-type', ctype)
+            self.set_header('Content-Type', ctype)
             self.set_header('Content-Length', str(fs))
             if 'connection' in self.request_headers:
                 self.set_header('Connection', self.request_headers['connection'])
@@ -160,6 +161,7 @@ class HTTPRequestHandler(object):
         self.set_header('Date', self.date_time_string())
         if code != OK:
             self.set_header('Content-Type', 'text/html')
+            self.set_header('Content-Length', '0')
             self.set_header('Connection', 'close')
         headers = '\r\n'.join('%s: %s' % (k, v) for k, v in self.response_headers.items())
         self.connection.sendall('%s\r\n%s\r\n\r\n%s' % (first_line, headers, self.body))
