@@ -45,7 +45,7 @@ SERVER_VERSION = 'OtusServer'
 PROTOCOL_VERSION = 'HTTP/1.1'
 
 
-class SimpleHTTPRequestHandler(object):
+class HTTPRequestHandler(object):
     document_root = 'http'
     index_file = 'index.html'
 
@@ -169,7 +169,7 @@ class SimpleHTTPRequestHandler(object):
         return strftime('%a, %d %b %Y %H:%M:%S GMT', gmtime())
 
 
-class SimpleHTTPThreadingServer(object):
+class HTTPThreadingServer(object):
     request_queue_size = 1024
 
     def __init__(self, host, port, request_handler):
