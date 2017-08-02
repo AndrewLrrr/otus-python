@@ -27,7 +27,7 @@ RESPONSE_CODES = {
     NOT_ALLOWED: 'Method Not Allowed',
 }
 
-ALLOWED_CONTENT_TYPES = [
+ALLOWED_CONTENT_TYPES = {
     'text/css',
     'text/html',
     'application/javascript',
@@ -36,9 +36,9 @@ ALLOWED_CONTENT_TYPES = [
     'image/gif',
     'text/plain',
     'application/x-shockwave-flash'
-]
+}
 
-ALLOWED_METHODS = ['GET', 'HEAD']
+ALLOWED_METHODS = {'GET', 'HEAD'}
 
 SERVER_VERSION = 'OtusServer'
 
