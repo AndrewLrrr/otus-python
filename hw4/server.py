@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-
+import SocketServer
 import multiprocessing
 import os
 import socket
 import logging
 import mimetypes
+import threading
 import urllib
 
 from time import gmtime, strftime
@@ -64,13 +65,14 @@ class SimpleHTTPRequestHandler(object):
             self.finish()
 
     def do_GET(self):
-        if self.set_head() and self.set_body():
-            logging.debug('Send file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
-            self.send_response(OK)
+        logging.debug('Send file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
+        status = self.set_head()
+        if status == OK:
+            return self.send_response(self.set_body())
+        return self.send_response(status)
 
     def do_HEAD(self):
-        if self.set_head():
-            self.send_response(OK)
+        return self.send_response(self.set_head())
 
     def run(self):
         self.handle_request()
@@ -81,21 +83,21 @@ class SimpleHTTPRequestHandler(object):
 
     def handle_request(self):
         raw_request_line = self.connection.recv(BUFFER_SIZE)
-        if not self.parse_request(raw_request_line):
+        response_code = self.parse_request(raw_request_line)
+        if response_code != OK:
+            self.send_response(response_code)
             return None
         method = getattr(self, 'do_' + self.method)
-        method()
+        return method()
 
     def parse_request(self, request_line):
         request_lines = request_line.split('\r\n')
         first_line = request_lines[0].split()
         if len(first_line) != 3:
-            self.send_error(BAD_REQUEST)
-            return False
+            return BAD_REQUEST
         method, url, version = request_lines[0].split()
         if method not in ALLOWED_METHODS:
-            self.send_error(NOT_ALLOWED)
-            return False
+            return NOT_ALLOWED
         del request_lines[0]
         for line in request_lines:
             if line.split():
@@ -108,7 +110,7 @@ class SimpleHTTPRequestHandler(object):
             self.is_directory = True
         self.path = self.document_root + os.path.realpath(parsed_path)
         self.method = method
-        return True
+        return OK
 
     def set_header(self, keyword, value):
         self.response_headers[keyword] = value
@@ -121,21 +123,18 @@ class SimpleHTTPRequestHandler(object):
         if os.path.isfile(self.path):
             ctype, _ = mimetypes.guess_type(self.path)
             if ctype not in ALLOWED_CONTENT_TYPES:
-                self.send_error(NOT_ALLOWED)
-                return False
+                return NOT_ALLOWED
             try:
                 fs = os.path.getsize(self.path)
             except os.error:
-                self.send_error(NOT_FOUND)
-                return False
+                return NOT_FOUND
             self.set_header('Content-type', ctype)
             self.set_header('Content-Length', str(fs))
             if 'connection' in self.request_headers:
                 self.set_header('Connection', self.request_headers['connection'])
-            return True
+            return OK
         else:
-            self.send_error(FORBIDDEN if need_index else NOT_FOUND)
-            return False
+            return FORBIDDEN if need_index else NOT_FOUND
 
     def set_body(self):
         try:
@@ -144,20 +143,17 @@ class SimpleHTTPRequestHandler(object):
                 self.body = f.read()
         except IOError:
             logging.debug('Failed file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
-            self.send_error(NOT_FOUND)
-            return False
-        return True
-
-    def send_error(self, code):
-        self.set_header('Content-Type', 'text/html')
-        self.set_header('Connection', 'close')
-        self.send_response(code)
+            return NOT_FOUND
+        return OK
 
     def send_response(self, code):
         logging.debug('Response | P: %s | Code: %d | Path: %s', multiprocessing.current_process().name, code, self.path)
         first_line = '%s %d %s' % (PROTOCOL_VERSION, code, RESPONSE_CODES[code])
         self.set_header('Server', SERVER_VERSION)
         self.set_header('Date', self.date_time_string())
+        if code != OK:
+            self.set_header('Content-Type', 'text/html')
+            self.set_header('Connection', 'close')
         headers = '\r\n'.join('%s: %s' % (k, v) for k, v in self.response_headers.items())
         self.connection.sendall('%s\r\n%s\r\n\r\n%s' % (first_line, headers, self.body))
 
@@ -193,4 +189,37 @@ class SimpleHTTPServer(object):
                 self.request_handler(conn, addr)
             except socket.error:
                 self.sock.close()
+
+
+class SimpleHTTPThreadingServer(object):
+    request_queue_size = 5
+
+    def __init__(self, host, port, request_handler):
+        self.sock = None
+        self.host = host
+        self.port = port
+        self.request_handler = request_handler
+        self.create_socket()
+
+    def create_socket(self):
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            self.sock.bind((self.host, self.port))
+            self.sock.listen(self.request_queue_size)
+        except socket.error as e:
+            raise RuntimeError(e)
+
+    def serve_forever(self):
+        while True:
+            try:
+                conn, addr = self.sock.accept()
+                logging.debug('Connected | P: %s | PID: %d', multiprocessing.current_process().name, os.getpid())
+                t = threading.Thread(target=self.request_handler, args=(conn, addr))
+                t.daemon = True
+                t.start()
+                logging.debug('Request handler running on thread: %s | P: %s', t.name, multiprocessing.current_process().name)
+            except socket.error:
+                self.sock.close()
+
 
