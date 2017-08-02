@@ -134,7 +134,7 @@ class HTTPRequestHandler(object):
             try:
                 fs = os.path.getsize(self.path)
             except os.error:
-                return NOT_FOUND
+                return NOT_ALLOWED
             self.set_header('Content-type', ctype)
             self.set_header('Content-Length', str(fs))
             if 'connection' in self.request_headers:
@@ -150,7 +150,7 @@ class HTTPRequestHandler(object):
                 self.body = f.read(int(self.response_headers['Content-Length']))
         except IOError:
             logging.debug('Failed file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
-            return NOT_FOUND
+            return NOT_ALLOWED
         return OK
 
     def send_response(self, code):
