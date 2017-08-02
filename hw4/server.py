@@ -58,6 +58,7 @@ class SimpleHTTPRequestHandler(object):
         self.request_headers = {}
         self.connection = connection
         self.client_address = client_address
+        self.close_connection = 1
         try:
             self.run()
         finally:
@@ -75,6 +76,8 @@ class SimpleHTTPRequestHandler(object):
 
     def run(self):
         self.handle_request()
+        while self.close_connection == 0:
+            self.handle_request()
 
     def finish(self):
         logging.debug('Socket close | P: %s | PID: %d', multiprocessing.current_process().name, os.getpid())
@@ -113,6 +116,11 @@ class SimpleHTTPRequestHandler(object):
 
     def set_header(self, keyword, value):
         self.response_headers[keyword] = value
+        if keyword.lower() == 'connection':
+            if value.lower() == 'close':
+                self.close_connection = 1
+            elif value.lower() == 'keep-alive':
+                self.close_connection = 0
 
     def set_head(self):
         need_index = False
@@ -139,7 +147,7 @@ class SimpleHTTPRequestHandler(object):
         try:
             logging.debug('Load file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
             with open(self.path, 'r') as f:
-                self.body = f.read()
+                self.body = f.read(int(self.response_headers['Content-Length']))
         except IOError:
             logging.debug('Failed file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
             return NOT_FOUND
@@ -162,7 +170,7 @@ class SimpleHTTPRequestHandler(object):
 
 
 class SimpleHTTPThreadingServer(object):
-    request_queue_size = 5
+    request_queue_size = 1024
 
     def __init__(self, host, port, request_handler):
         self.sock = None
