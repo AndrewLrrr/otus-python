@@ -11,7 +11,7 @@ import urllib
 from time import gmtime, strftime
 from urlparse import urlparse
 
-BUFFER_SIZE = 1024
+BUFFER_SIZE = 256
 
 OK = 200
 BAD_REQUEST = 400
@@ -44,6 +44,8 @@ SERVER_VERSION = 'OtusServer'
 
 PROTOCOL_VERSION = 'HTTP/1.1'
 
+HEADER_SEPARATOR = '\r\n\r\n'
+
 
 class HTTPRequestHandler(object):
     document_root = 'http'
@@ -54,18 +56,21 @@ class HTTPRequestHandler(object):
         self.path = None
         self.body = ''
         self.is_directory = False
+        self.raw_request_line = ''
         self.response_headers = {}
         self.request_headers = {}
         self.connection = connection
         self.client_address = client_address
         self.close_connection = 1
+        self.process = multiprocessing.current_process().name
+        self.thread = threading.current_thread().name
         try:
             self.run()
         finally:
             self.finish()
 
     def do_GET(self):
-        logging.debug('Get file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
+        logging.debug('Get file | P: %s | T: %s | Path: %s', self.process, self.thread, self.path)
         status = self.set_head()
         if status == OK:
             return self.send_response(self.set_body())
@@ -80,11 +85,11 @@ class HTTPRequestHandler(object):
             self.handle_request()
 
     def finish(self):
-        logging.debug('Socket close | P: %s | PID: %d', multiprocessing.current_process().name, os.getpid())
+        logging.debug('Socket close | P: %s | T: %s', self.process, self.thread)
         self.connection.close()
 
     def handle_request(self):
-        raw_request_line = self.connection.recv(BUFFER_SIZE)
+        raw_request_line = self.recvall()
         response_code = self.parse_request(raw_request_line)
         if response_code != OK:
             self.send_response(response_code)
@@ -106,11 +111,10 @@ class HTTPRequestHandler(object):
                 break
             k, v = line.split(':', 1)
             self.request_headers[k.lower()] = v.strip()
-        logging.debug('Request url | P: %s | Url: %s', multiprocessing.current_process().name, url)
+        logging.debug('Request url | P: %s | T: %s | Url: %s', self.process, self.thread, url)
         parsed_url = urlparse(url)
         parsed_path = urllib.unquote(parsed_url.path).decode('utf8')
-        if parsed_path.endswith('/'):
-            self.is_directory = True
+        self.is_directory = parsed_path.endswith('/')
         self.path = self.document_root + os.path.realpath(parsed_path)
         self.method = method
         return OK
@@ -146,16 +150,16 @@ class HTTPRequestHandler(object):
 
     def set_body(self):
         try:
-            logging.debug('Load file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
+            logging.debug('Load file | P: %s | T: %s | Path: %s', self.process, self.thread, self.path)
             with open(self.path, 'r') as f:
                 self.body = f.read(int(self.response_headers['Content-Length']))
         except IOError:
-            logging.debug('Failed file | P: %s | Path: %s', multiprocessing.current_process().name, self.path)
+            logging.debug('Failed file | P: %s | T: %s | Path: %s', self.process, self.thread, self.path)
             return NOT_ALLOWED
         return OK
 
     def send_response(self, code):
-        logging.debug('Response | P: %s | Code: %d | Path: %s', multiprocessing.current_process().name, code, self.path)
+        logging.debug('Response | P: %s | T: %s | Code: %d | Path: %s', self.process, self.thread, code, self.path)
         first_line = '%s %d %s' % (PROTOCOL_VERSION, code, RESPONSE_CODES[code])
         self.set_header('Server', SERVER_VERSION)
         self.set_header('Date', self.date_time_string())
@@ -164,7 +168,21 @@ class HTTPRequestHandler(object):
             self.set_header('Content-Length', '0')
             self.set_header('Connection', 'close')
         headers = '\r\n'.join('%s: %s' % (k, v) for k, v in self.response_headers.items())
-        self.connection.sendall('%s\r\n%s\r\n\r\n%s' % (first_line, headers, self.body))
+        try:
+            self.connection.sendall(
+                '%s\r\n%s%s%s' % (first_line, headers, HEADER_SEPARATOR, self.body if code == OK else '')
+            )
+        except socket.error:
+            logging.debug('Sendall socket error | P: %s | T: %s', self.process, self.thread)
+
+    def recvall(self):
+        raw_request_line = ''
+        while True:
+            data = self.connection.recv(BUFFER_SIZE)
+            raw_request_line += data
+            if raw_request_line.find(HEADER_SEPARATOR) >= 0 or not data:  # Doesn't read body of request
+                break
+        return raw_request_line
 
     @staticmethod
     def date_time_string():
@@ -198,6 +216,7 @@ class HTTPThreadingServer(object):
                 t = threading.Thread(target=self.request_handler, args=(conn, addr))
                 t.daemon = True
                 t.start()
-                logging.debug('Request handler running on thread: %s | P: %s', t.name, multiprocessing.current_process().name)
+                logging.debug('Request handler running on thread: %s | P: %s', t.name,
+                              multiprocessing.current_process().name)
             except socket.error:
                 self.sock.close()
