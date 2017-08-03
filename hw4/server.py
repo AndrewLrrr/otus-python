@@ -11,7 +11,7 @@ import urllib
 from time import gmtime, strftime
 from urlparse import urlparse
 
-BUFFER_SIZE = 256
+BUFFER_SIZE = 1024
 
 OK = 200
 BAD_REQUEST = 400
@@ -44,7 +44,7 @@ SERVER_VERSION = 'OtusServer'
 
 PROTOCOL_VERSION = 'HTTP/1.1'
 
-HEADER_SEPARATOR = '\r\n\r\n'
+HTTP_HEAD_SEPARATOR = '\r\n\r\n'
 
 
 class HTTPRequestHandler(object):
@@ -56,7 +56,6 @@ class HTTPRequestHandler(object):
         self.path = None
         self.body = ''
         self.is_directory = False
-        self.raw_request_line = ''
         self.response_headers = {}
         self.request_headers = {}
         self.connection = connection
@@ -170,7 +169,7 @@ class HTTPRequestHandler(object):
         headers = '\r\n'.join('%s: %s' % (k, v) for k, v in self.response_headers.items())
         try:
             self.connection.sendall(
-                '%s\r\n%s%s%s' % (first_line, headers, HEADER_SEPARATOR, self.body if code == OK else '')
+                '%s\r\n%s%s%s' % (first_line, headers, HTTP_HEAD_SEPARATOR, self.body if code == OK else '')
             )
         except socket.error:
             logging.debug('Sendall socket error | P: %s | T: %s', self.process, self.thread)
@@ -180,7 +179,7 @@ class HTTPRequestHandler(object):
         while True:
             data = self.connection.recv(BUFFER_SIZE)
             raw_request_line += data
-            if raw_request_line.find(HEADER_SEPARATOR) >= 0 or not data:  # Doesn't read body of request
+            if raw_request_line.find(HTTP_HEAD_SEPARATOR) >= 0 or not data:  # Doesn't read body of request
                 break
         return raw_request_line
 
