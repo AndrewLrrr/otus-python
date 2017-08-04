@@ -27,7 +27,7 @@ RESPONSE_CODES = {
     NOT_ALLOWED: 'Method Not Allowed',
 }
 
-ALLOWED_CONTENT_TYPES = {
+ALLOWED_CONTENT_TYPES = (
     'text/css',
     'text/html',
     'application/javascript',
@@ -36,15 +36,15 @@ ALLOWED_CONTENT_TYPES = {
     'image/gif',
     'text/plain',
     'application/x-shockwave-flash'
-}
+)
 
-ALLOWED_METHODS = {'GET', 'HEAD'}
+ALLOWED_METHODS = ('GET', 'HEAD')
 
 SERVER_VERSION = 'OtusServer'
 
 PROTOCOL_VERSION = 'HTTP/1.1'
 
-HTTP_HEAD_SEPARATOR = '\r\n\r\n'
+HTTP_HEAD_TERMINATOR = '\r\n\r\n'
 
 
 class HTTPRequestHandler(object):
@@ -115,7 +115,7 @@ class HTTPRequestHandler(object):
         parsed_path = urllib.unquote(parsed_url.path).decode('utf8')
         self.is_directory = parsed_path.endswith('/')
         self.path = self.document_root + os.path.realpath(parsed_path)
-        self.method = method
+        self.method = method.upper()
         return OK
 
     def set_header(self, keyword, value):
@@ -169,7 +169,7 @@ class HTTPRequestHandler(object):
         headers = '\r\n'.join('%s: %s' % (k, v) for k, v in self.response_headers.items())
         try:
             self.connection.sendall(
-                '%s\r\n%s%s%s' % (first_line, headers, HTTP_HEAD_SEPARATOR, self.body if code == OK else '')
+                '%s\r\n%s%s%s' % (first_line, headers, HTTP_HEAD_TERMINATOR, self.body if code == OK else '')
             )
         except socket.error:
             logging.debug('Sendall socket error | P: %s | T: %s', self.process, self.thread)
@@ -179,7 +179,7 @@ class HTTPRequestHandler(object):
         while True:
             data = self.connection.recv(BUFFER_SIZE)
             raw_request_line += data
-            if raw_request_line.find(HTTP_HEAD_SEPARATOR) >= 0 or not data:  # Doesn't read body of request
+            if raw_request_line.find(HTTP_HEAD_TERMINATOR) >= 0 or not data:  # Doesn't read body of request
                 break
         return raw_request_line
 
@@ -215,7 +215,6 @@ class HTTPThreadingServer(object):
                 t = threading.Thread(target=self.request_handler, args=(conn, addr))
                 t.daemon = True
                 t.start()
-                logging.debug('Request handler running on thread: %s | P: %s', t.name,
-                              multiprocessing.current_process().name)
+                logging.debug('Request handler running | P: %s | T: %s', multiprocessing.current_process().name, t.name)
             except socket.error:
                 self.sock.close()
