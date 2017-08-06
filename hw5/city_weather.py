@@ -9,10 +9,15 @@ import urllib2
 API_KEY = '702427a7f6ca615420e9301f2cefbc90'
 
 
+def do_request(url, data=None):
+    encoded_data = '?' + urllib.urlencode(data) if data else ''
+    response = urllib2.urlopen(url + encoded_data, timeout=60)
+    return response.read()
+
+
 def get_city_by_ip(ip):
     url = 'http://ipinfo.io/{}/json'.format(ip)
-    response = urllib2.urlopen(url, timeout=60)
-    data = json.loads(response.read())
+    data = json.loads(do_request(url))
     return data['city']
 
 
@@ -23,23 +28,27 @@ def get_weather_by_city(city):
               'units': 'metric',
               'APPID': API_KEY
               }
-    encoded_values = urllib.urlencode(values)
-    response = urllib2.urlopen(url + '?' + encoded_values)
-    return json.loads(response.read())
+    return json.loads(do_request(url, values))
 
 
-def main():
-    city_ip = '176.14.221.123'
+def get_weather_by_city_ip(ip):
     try:
-        city_name = get_city_by_ip(city_ip)
+        city_name = get_city_by_ip(ip)
         city_weather = get_weather_by_city(city_name)
         temp = str(city_weather['main']['temp'])
         temp = temp if temp.startswith('-') else '+' + temp
         conditions = city_weather['weather'][0]['description']
-        return {'city': city_name, 'temp': temp, 'conditions': conditions}
+        response = {'city': city_name, 'temp': temp, 'conditions': conditions}
     except (urllib2.HTTPError, KeyError) as e:
-        return {'Error': 'Error `{}` during response'.format(e)}
+        response = {'error': str(e), 'ip': ip}
+    return json.dumps(response)
 
 
-if __name__ == '__main__':
-    print main()
+def application(environ, start_response):
+    ip = '176.14.221.123'
+    content = get_weather_by_city_ip(ip)
+    start_response('200 OK', [
+        ('Content-Type', 'application/json'),
+        ('Content-Length', str(len(content)))
+    ])
+    return [content]
