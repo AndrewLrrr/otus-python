@@ -1,0 +1,9 @@
+[Unit]
+Description=ip2v uWSGI daemon
+
+[Service]
+ExecStartPre=-/usr/bin/bash -c 'mkdir -p /run/uwsgi; chown nginx:nginx /run/uwsgi'
+ExecStart=/usr/bin/bash -c 'cd /home/vagrant/PycharmProjects/otus/hw5; source virtenv/bin/activate; uwsgi --ini ip2w.ini'
+
+[Install]
+WantedBy=multi-user.target
