@@ -13,8 +13,8 @@ Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
 BuildRequires: systemd
-Requires:	
-Summary:  ...
+Requires:
+Summary:
 
 
 %description
