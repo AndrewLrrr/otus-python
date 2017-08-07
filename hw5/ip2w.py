@@ -2,11 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import json
+import os
 import urllib
 import urllib2
-
-
-API_KEY = '702427a7f6ca615420e9301f2cefbc90'
 
 
 def do_request(url, data=None):
@@ -15,46 +13,45 @@ def do_request(url, data=None):
     return response.read()
 
 
-def get_city_by_ip(ip):
+def get_geo_data_by_ip(ip):
     url = 'http://ipinfo.io/{}/json'.format(ip)
-    data = json.loads(do_request(url))
-    return data.get('city')
+    return json.loads(do_request(url))
 
 
-def get_weather_by_city(city):
+def get_weather(lat, lon):
+    api_key = os.environ['OPEN_WEATHER_API_KEY']
     url = 'http://api.openweathermap.org/data/2.5/weather'
-    values = {'q': city,
+    values = {'lat': lat,
+              'lon': lon,
               'lang': 'ru',
               'units': 'metric',
-              'APPID': API_KEY
+              'APPID': api_key
               }
     return json.loads(do_request(url, values))
 
 
 def get_weather_by_ip(ip):
     try:
-        city_name = get_city_by_ip(ip)
-        if not city_name:
-            raise RuntimeError('City not found')
-        city_weather = get_weather_by_city(city_name)
-        try:
-            temp = str(city_weather['main']['temp'])
-            temp = temp if temp.startswith('-') else '+' + temp
-            conditions = city_weather['weather'][0]['description']
-        except KeyError:
-            raise RuntimeError('Incorrect weather API response')
-        response = {'city': city_name, 'temp': temp, 'conditions': conditions}
-    except (urllib2.HTTPError, RuntimeError) as e:
-        response = {'error': str(e), 'ip': ip}
-    return json.dumps(response)
+        geo_data = get_geo_data_by_ip(ip)
+        city_weather = get_weather(*geo_data.get('loc').split(','))
+        city = city_weather['name']
+        temp = str(city_weather['main']['temp'])
+        temp = temp if temp.startswith('-') else '+' + temp
+        conditions = city_weather['weather'][0]['description']
+        return {
+            'code': '200',
+            'message': json.dumps({'city': city, 'temp': temp, 'conditions': conditions})
+        }
+    except urllib2.HTTPError as e:
+        return {'code': str(e.getcode()), 'message': json.dumps({'error': str(e)})}
 
 
 def application(environ, start_response):
     request = environ['PATH_INFO'].split('/')
     ip = request[2]
-    content = get_weather_by_ip(ip)
-    start_response('200 OK', [
+    respond = get_weather_by_ip(ip)
+    start_response(respond['code'], [
         ('Content-Type', 'application/json'),
-        ('Content-Length', str(len(content)))
+        ('Content-Length', str(len(respond['message'])))
     ])
-    return [content]
+    return [respond['message']]
