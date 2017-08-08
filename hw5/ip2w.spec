@@ -13,29 +13,37 @@ Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
 BuildRequires: systemd
-Requires:
-Summary:
+Requires: python
+Summary: Example Python application based on uWSGI and Nginx
 
 
 %description
-...
+Determines the weather by IP address
+
 Git version: %{git_version} (branch: %{git_branch})
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-buildroot
 
-%define __etcdir    /usr/local/etc
-%define __logdir    /val/log/
-%define __bindir    /usr/local/ip2w/
-%define __systemddir	/usr/lib/systemd/system/
+%define __etcdir        /usr/local/etc
+%define __logdir        /val/log/
+%define __bindir        /usr/local/ip2w/
+%define __systemddir    /usr/lib/systemd/system/
 
 %prep
-...
+rm -rf %{buildroot}
+%setup -n otus-%{current_datetime}
 
 %install
 [ "%{buildroot}" != "/" ] && rm -fr %{buildroot}
 %{__mkdir} -p %{buildroot}/%{__systemddir}
-%{__install} -pD -m 644 ... %{buildroot}/%{__systemddir}/%{name}.service
-...
+%{__mkdir} -p %{buildroot}/%{__bindir}
+%{__mkdir} -p %{buildroot}/%{__logdir}
+%{__mkdir} -p %{buildroot}/%{__etcdir}
+
+%{__install} -pD -m 644 %{name}.service %{buildroot}/%{__systemddir}/%{name}.service
+%{__install} -pD -m 644 %{name}.py %{buildroot}/%{__bindir}/%{name}.py
+%{__install} -pD -m 644 %{name}.ini %{buildroot}/%{__etcdir}/%{name}.ini
+
 
 %post
 %systemd_post %{name}.service
@@ -55,5 +63,4 @@ systemctl daemon-reload
 %{__logdir}
 %{__bindir}
 %{__systemddir}
-%{__sysconfigdir}
-...
+%{__etcdir}
