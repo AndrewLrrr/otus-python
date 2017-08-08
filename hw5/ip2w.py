@@ -1,15 +1,47 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import json
 import os
+import json
+import time
 import urllib
 import urllib2
+import logging
+
+from functools import wraps
+
+logging.basicConfig(format='[%(asctime)s] %(levelname)s %(message)s', level=logging.WARNING,
+                    datefmt='%a %b %d %H:%M:%S %Y')
 
 
+def retry(ExceptionToCheck, tries=4, delay=3, backoff=2):
+    """Retry calling the decorated function using an exponential backoff.
+    https://www.saltycrane.com/blog/2009/11/trying-out-retry-decorator-python/
+    """
+
+    def deco_retry(f):
+        @wraps(f)
+        def f_retry(*args, **kwargs):
+            mtries, mdelay = tries, delay
+            while mtries > 1:
+                try:
+                    return f(*args, **kwargs)
+                except ExceptionToCheck as e:
+                    logging.warning('%s, Retrying in %d seconds...', str(e), mdelay)
+                    time.sleep(mdelay)
+                    mtries -= 1
+                    mdelay *= backoff
+            return f(*args, **kwargs)
+
+        return f_retry
+
+    return deco_retry
+
+
+@retry(urllib2.URLError)
 def do_request(url, data=None):
     encoded_data = '?' + urllib.urlencode(data) if data else ''
-    response = urllib2.urlopen(url + encoded_data, timeout=60)
+    response = urllib2.urlopen(url + encoded_data, timeout=30)
     return response.read()
 
 
@@ -38,20 +70,23 @@ def get_weather_by_ip(ip):
         temp = str(city_weather['main']['temp'])
         temp = temp if temp.startswith('-') else '+' + temp
         conditions = city_weather['weather'][0]['description']
-        return {
-            'code': '200',
-            'message': json.dumps({'city': city, 'temp': temp, 'conditions': conditions})
-        }
+        return '200', {'city': city, 'temp': temp, 'conditions': conditions}
     except urllib2.HTTPError as e:
-        return {'code': str(e.getcode()), 'message': json.dumps({'error': str(e)})}
+        return str(e.getcode()), {'error': str(e)}
+    except urllib2.URLError:
+        return '504', {'error': 'Gateway Timeout'}
+    except Exception as e:
+        logging.error('Exception error: %s', repr(e))
+        return '500', {'error': 'Internal error'}
 
 
 def application(environ, start_response):
     request = environ['PATH_INFO'].split('/')
     ip = request[2]
-    respond = get_weather_by_ip(ip)
-    start_response(respond['code'], [
+    code, respond = get_weather_by_ip(ip)
+    respond = json.dumps(respond)
+    start_response(code, [
         ('Content-Type', 'application/json'),
-        ('Content-Length', str(len(respond['message'])))
+        ('Content-Length', str(len(respond)))
     ])
-    return [respond['message']]
+    return [respond]
