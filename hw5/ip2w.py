@@ -73,10 +73,11 @@ def get_weather_by_ip(ip):
         return '200', {'city': city, 'temp': temp, 'conditions': conditions}
     except urllib2.HTTPError as e:
         return str(e.getcode()), {'error': str(e)}
-    except urllib2.URLError:
+    except urllib2.URLError as e:
+        logging.error('URLError: %s', repr(e))
         return '504', {'error': 'Gateway Timeout'}
     except Exception as e:
-        logging.error('Exception error: %s', repr(e))
+        logging.error('Exception: %s', repr(e))
         return '500', {'error': 'Internal error'}
 
 
