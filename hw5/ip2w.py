@@ -14,7 +14,7 @@ logging.basicConfig(format='[%(asctime)s] %(levelname)s %(message)s', level=logg
                     datefmt='%a %b %d %H:%M:%S %Y')
 
 
-def retry(ExceptionToCheck, tries=4, delay=3, backoff=2):
+def retry(ExceptionToCheck, tries=3, delay=3, backoff=2):
     """Retry calling the decorated function using an exponential backoff.
     https://www.saltycrane.com/blog/2009/11/trying-out-retry-decorator-python/
     """
