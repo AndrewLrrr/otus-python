@@ -51,7 +51,10 @@ def get_geo_data_by_ip(ip):
 
 
 def get_weather(lat, lon):
-    api_key = os.environ['OPEN_WEATHER_API_KEY']
+    try:
+        api_key = os.environ['OPEN_WEATHER_API_KEY']
+    except KeyError:
+        raise EnvironmentError('Set OPEN_WEATHER_API_KEY environment key')
     url = 'http://api.openweathermap.org/data/2.5/weather'
     values = {'lat': lat,
               'lon': lon,
@@ -82,8 +85,11 @@ def get_weather_by_ip(ip):
 
 
 def application(environ, start_response):
-    request = environ['PATH_INFO'].split('/')
-    ip = request[2]
+    request = environ['PATH_INFO'].strip('/').split('/')
+    try:
+        ip = request[1]
+    except IndexError:
+        ip = environ['REMOTE_ADDR']
     code, respond = get_weather_by_ip(ip)
     respond = json.dumps(respond)
     start_response(code, [

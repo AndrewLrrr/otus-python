@@ -2,7 +2,7 @@
 Description=ip2v uWSGI daemon
 
 [Service]
-ExecStartPre=-/usr/bin/bash -c 'mkdir -p /run/uwsgi; chown nginx:nginx /run/uwsgi'
+EnvironmentFile=-/etc/sysconfig/ip2w
 ExecStart=/usr/bin/bash -c 'uwsgi --ini /usr/local/etc/ip2w.ini'
 
 [Install]
