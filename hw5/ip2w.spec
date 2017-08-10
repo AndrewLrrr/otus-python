@@ -41,7 +41,7 @@ rm -rf %{buildroot}
 %{__mkdir} -p %{buildroot}/%{__etcdir}
 
 %{__install} -pD -m 644 %{name}.service %{buildroot}/%{__systemddir}/%{name}.service
-%{__install} -pD -m 644 %{name}.py %{buildroot}/%{__bindir}/%{name}.py
+%{__install} -pD -m 755 %{name}.py %{buildroot}/%{__bindir}/%{name}.py
 %{__install} -pD -m 644 %{name}.ini %{buildroot}/%{__etcdir}/%{name}.ini
 
 
