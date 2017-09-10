@@ -47,6 +47,9 @@ class LogisticRegression:
             # replacement is faster than sampling without replacement.              #
             #########################################################################
 
+            batch = np.random.choice(num_train, batch_size, replace=True)
+            X_batch = X[batch]
+            y_batch = y[batch]
 
             #########################################################################
             #                       END OF YOUR CODE                                #
@@ -61,6 +64,7 @@ class LogisticRegression:
             # Update the weights using the gradient and the learning rate.          #
             #########################################################################
 
+            self.w = learning_rate * gradW
 
             #########################################################################
             #                       END OF YOUR CODE                                #
@@ -92,7 +96,11 @@ class LogisticRegression:
         # Hint: It might be helpful to use np.vstack and np.sum                   #
         ###########################################################################
 
+        dX = sparse.csr_matrix.dot(X, np.matrix(self.w).T)
 
+        dd = np.squeeze(np.asarray(self.logistic(dX)))
+
+        y_proba = np.vstack((1 - dd, dd)).T
 
         ###########################################################################
         #                           END OF YOUR CODE                              #
@@ -117,7 +125,7 @@ class LogisticRegression:
         # Implement this method. Store the predicted labels in y_pred.            #
         ###########################################################################
         y_proba = self.predict_proba(X, append_bias=True)
-        y_pred = ...
+        y_pred = np.argmax(y_proba, axis=1)
 
         ###########################################################################
         #                           END OF YOUR CODE                              #
@@ -134,22 +142,42 @@ class LogisticRegression:
         - loss as single float
         - gradient with respect to weights w; an array of same shape as w
         """
+
         dw = np.zeros_like(self.w)  # initialize the gradient as zero
         loss = 0
+
         # Compute loss and gradient. Your code should not contain python loops.
 
+        dX = sparse.csr_matrix.dot(X_batch, np.matrix(self.w).T)
+
+        dd = np.squeeze(np.asarray(self.logistic(dX)))
+
+        dw = np.squeeze(np.asarray(sparse.csc_matrix.dot(X_batch.T, np.matrix(y_batch - dd).T).T))
+
+        loss = -(y_batch * np.log(dd) + (1.0 - y_batch) * np.log(1.0 - dd))
 
         # Right now the loss is a sum over all training examples, but we want it
         # to be an average instead so we divide by num_train.
         # Note that the same thing must be done with gradient.
+        # print 'loss : ' + str(loss)
 
+        loss = np.mean(loss)
+
+        dw /= -X_batch.shape[0]
 
         # Add regularization to the loss and gradient.
         # Note that you have to exclude bias term in regularization.
 
+        loss += reg * np.sum(self.w[:-1] ** 2)
+        dw += 2 * reg * np.hstack((self.w[:-1], [0]))
 
         return loss, dw
 
     @staticmethod
     def append_biases(X):
         return sparse.hstack((X, np.ones(X.shape[0])[:, np.newaxis])).tocsr()
+
+    @staticmethod
+    def logistic(z):
+        return 1 / (1 + np.exp(-z))
+
