@@ -64,7 +64,7 @@ class LogisticRegression:
             # Update the weights using the gradient and the learning rate.          #
             #########################################################################
 
-            self.w = learning_rate * gradW
+            self.w = self.w - learning_rate * gradW
 
             #########################################################################
             #                       END OF YOUR CODE                                #
@@ -96,11 +96,9 @@ class LogisticRegression:
         # Hint: It might be helpful to use np.vstack and np.sum                   #
         ###########################################################################
 
-        dX = sparse.csr_matrix.dot(X, np.matrix(self.w).T)
+        y_predictions = self.logistic(self.nn(X, self.w))
 
-        dd = np.squeeze(np.asarray(self.logistic(dX)))
-
-        y_proba = np.vstack((1 - dd, dd)).T
+        y_proba = np.vstack((1 - y_predictions, y_predictions)).T
 
         ###########################################################################
         #                           END OF YOUR CODE                              #
@@ -148,20 +146,16 @@ class LogisticRegression:
 
         # Compute loss and gradient. Your code should not contain python loops.
 
-        dX = sparse.csr_matrix.dot(X_batch, np.matrix(self.w).T)
+        y_predictions = self.logistic(self.nn(X_batch, self.w))
 
-        dd = np.squeeze(np.asarray(self.logistic(dX)))
+        loss = self.cost(y_predictions, y_batch).mean()
 
-        dw = np.squeeze(np.asarray(sparse.csc_matrix.dot(X_batch.T, np.matrix(y_batch - dd).T).T))
-
-        loss = -(y_batch * np.log(dd) + (1.0 - y_batch) * np.log(1.0 - dd))
+        dw = self.gradient(self.w, X_batch, y_batch)
 
         # Right now the loss is a sum over all training examples, but we want it
         # to be an average instead so we divide by num_train.
         # Note that the same thing must be done with gradient.
         # print 'loss : ' + str(loss)
-
-        loss = np.mean(loss)
 
         dw /= -X_batch.shape[0]
 
@@ -173,11 +167,26 @@ class LogisticRegression:
 
         return loss, dw
 
+    def nn(self, x, w):
+        """Define the neural network function y = 1 / (1 + numpy.exp(-x*w))"""
+        return self.logistic(x.dot(w.T))
+
+    def gradient(self, w, x, t):
+        """Define the gradient function"""
+        return (self.nn(x, w) - t).T * x
+
+    @staticmethod
+    def logistic(z):
+        """Define the logistic function"""
+        return 1.0 / (1.0 + np.exp(-z))
+
+    @staticmethod
+    def cost(y, t):
+        """Define the cost function"""
+        return - np.sum(np.multiply(t, np.log(y)) + np.multiply((1 - t), np.log(1 - y)))
+
     @staticmethod
     def append_biases(X):
         return sparse.hstack((X, np.ones(X.shape[0])[:, np.newaxis])).tocsr()
 
-    @staticmethod
-    def logistic(z):
-        return 1 / (1 + np.exp(-z))
 
