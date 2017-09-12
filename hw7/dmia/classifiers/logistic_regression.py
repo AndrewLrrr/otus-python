@@ -158,7 +158,7 @@ class LogisticRegression:
         # Note that the same thing must be done with gradient.
         # print 'loss : ' + str(loss)
 
-        num_train = X_batch.shape[1]
+        num_train = X_batch.shape[0]
 
         dw /= num_train
         loss /= num_train
@@ -167,7 +167,7 @@ class LogisticRegression:
         # Note that you have to exclude bias term in regularization.
 
         loss += reg * np.sum(self.w[:-1] ** 2)
-        dw += 2 * reg * np.hstack((self.w[:-1], [0]))
+        dw[:-1] += reg * self.w[:-1]
 
         return loss, dw
 
@@ -187,5 +187,3 @@ class LogisticRegression:
     @staticmethod
     def append_biases(X):
         return sparse.hstack((X, np.ones(X.shape[0])[:, np.newaxis])).tocsr()
-
-
