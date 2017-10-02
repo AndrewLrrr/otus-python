@@ -1,2 +1,3 @@
 *.tsv.gz
 addressbook_pb2.py
+*.log
