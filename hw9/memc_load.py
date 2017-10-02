@@ -8,6 +8,7 @@ import glob
 import logging
 import collections
 import threading
+import multiprocessing
 from optparse import OptionParser
 # brew install protobuf
 # protoc  --python_out=. ./appsinstalled.proto
@@ -54,25 +55,27 @@ def parse_appsinstalled(line):
     return AppsInstalled(dev_type, dev_id, lat, lon, apps)
 
 
-def insert_appsinstalled(queue, device_memc):
+def insert_appsinstalled(queue, device_memc, dry_run):
     processed = errors = 0
 
     while True:
         try:
             task = queue.get(timeout=0.1)
         except Queue.Empty:
-            logging.info('%s | Records inserted: %s', threading.current_thread().name, processed)
+            logging.info('%s | %s | Records inserted: %s', multiprocessing.current_process().name,
+                         threading.current_thread().name, processed)
             if processed:
                 err_rate = float(errors) / processed
                 if err_rate < NORMAL_ERR_RATE:
-                    logging.info('%s | Acceptable error rate (%s). Successfull load', threading.current_thread().name,
-                                 err_rate)
+                    logging.info('%s | %s | Acceptable error rate (%s). Successfull load',
+                                 multiprocessing.current_process().name, threading.current_thread().name, err_rate)
                 else:
-                    logging.error('%s | High error rate (%s > %s). Failed load', err_rate,
-                                  threading.current_thread().name, NORMAL_ERR_RATE)
+                    logging.error('%s | %s | High error rate (%s > %s). Failed load',
+                                  multiprocessing.current_process().name, threading.current_thread().name, err_rate,
+                                  NORMAL_ERR_RATE)
             return
 
-        pools, line, dry_run = task
+        pools, line = task
         appsinstalled = parse_appsinstalled(line)
 
         if not appsinstalled:
@@ -111,6 +114,40 @@ def insert_appsinstalled(queue, device_memc):
         memc_pool.put(memc)
 
 
+def handle_log((fn, device_memc, threads_cnt, dry_run)):
+    pools = collections.defaultdict(Queue.Queue)
+    queue = Queue.Queue()
+    workers = []
+
+    for i in range(threads_cnt):
+        thread = threading.Thread(target=insert_appsinstalled, args=(queue, device_memc, dry_run))
+        thread.daemon = True
+        workers.append(thread)
+
+    for thread in workers:
+        thread.start()
+
+    logging.info('%s | Processing %s', multiprocessing.current_process().name, fn)
+
+    lines_counter = 0
+    fd = gzip.open(fn)
+    for line in fd:
+        line = line.strip()
+        if not line:
+            continue
+        lines_counter += 1
+        queue.put((pools, line))
+    fd.close()
+
+    logging.info('%s | Finished file %s | Total records inserted: %s', multiprocessing.current_process().name, fn,
+                 lines_counter)
+
+    for thread in workers:
+        thread.join()
+
+    return fn
+
+
 def main(options):
     device_memc = {
         'idfa': options.idfa,
@@ -119,34 +156,17 @@ def main(options):
         'dvid': options.dvid,
     }
 
-    pools = collections.defaultdict(Queue.Queue)
-    queue = Queue.Queue()
-    workers = []
-
-    for i in range(int(options.threads)):
-        thread = threading.Thread(target=insert_appsinstalled, args=(queue, device_memc,))
-        thread.daemon = True
-        workers.append(thread)
-
-    for thread in workers:
-        thread.start()
+    pool = multiprocessing.Pool(int(options.pool))
+    fargs = []
 
     for fn in glob.iglob(options.pattern):
-        logging.info('Processing %s', fn)
-        lines_counter = 0
-        fd = gzip.open(fn)
-        for line in fd:
-            line = line.strip()
-            if not line:
-                continue
-            lines_counter += 1
-            queue.put((pools, line, options.dry))
-        logging.info('File %s | Total records inserted: %s', fn, lines_counter)
-        fd.close()
-        dot_rename(fn)
+        fargs.append((fn, device_memc, int(options.threads), options.dry))
 
-    for thread in workers:
-        thread.join()
+    fargs.sort(key=lambda x: x[0])
+
+    for f in pool.imap(handle_log, fargs):
+        dot_rename(f)
+        logging.info('%s | Renamed file %s', multiprocessing.current_process().name, f)
 
 
 def prototest():
@@ -175,7 +195,8 @@ if __name__ == '__main__':
     op.add_option('--gaid', action='store', default='127.0.0.1:33014')
     op.add_option('--adid', action='store', default='127.0.0.1:33015')
     op.add_option('--dvid', action='store', default='127.0.0.1:33016')
-    op.add_option('--threads', action='store', default='4')
+    op.add_option('--threads', action='store', default=4)
+    op.add_option('--pool', action='store', default=2)
     (opts, args) = op.parse_args()
     logging.basicConfig(filename=opts.log, level=logging.INFO if not opts.dry else logging.DEBUG,
                         format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
