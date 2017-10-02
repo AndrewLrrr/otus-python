@@ -65,9 +65,11 @@ def insert_appsinstalled(queue, device_memc):
             if processed:
                 err_rate = float(errors) / processed
                 if err_rate < NORMAL_ERR_RATE:
-                    logging.info('Acceptable error rate (%s). Successfull load', err_rate)
+                    logging.info('%s | Acceptable error rate (%s). Successfull load', threading.current_thread().name,
+                                 err_rate)
                 else:
-                    logging.error('High error rate (%s > %s). Failed load', err_rate, NORMAL_ERR_RATE)
+                    logging.error('%s | High error rate (%s > %s). Failed load', err_rate,
+                                  threading.current_thread().name, NORMAL_ERR_RATE)
             return
 
         pools, line, dry_run = task
