@@ -46,11 +46,11 @@ def parse_appsinstalled(line):
         apps = [int(a.strip()) for a in raw_apps.split(",")]
     except ValueError:
         apps = [int(a.strip()) for a in raw_apps.split(",") if a.isidigit()]
-        logging.info('Not all user apps are digits: `{}`'.format(line))
+        logging.info('Not all user apps are digits: `%s`', line)
     try:
         lat, lon = float(lat), float(lon)
     except ValueError:
-        logging.info('Invalid geo coords: `{}`'.format(line))
+        logging.info('Invalid geo coords: `%s`', line)
     return AppsInstalled(dev_type, dev_id, lat, lon, apps)
 
 
@@ -61,13 +61,13 @@ def insert_appsinstalled(queue, device_memc):
         try:
             task = queue.get(timeout=0.1)
         except Queue.Empty:
-            logging.info('Records inserted: {}'.format(processed))
+            logging.info('%s | Records inserted: %s', threading.current_thread().name, processed)
             if processed:
                 err_rate = float(errors) / processed
                 if err_rate < NORMAL_ERR_RATE:
-                    logging.info('Acceptable error rate ({}). Successfull load'.format(err_rate))
+                    logging.info('Acceptable error rate (%s). Successfull load', err_rate)
                 else:
-                    logging.error('High error rate ({} > {}). Failed load'.format(err_rate, NORMAL_ERR_RATE))
+                    logging.error('High error rate (%s > %s). Failed load', err_rate, NORMAL_ERR_RATE)
             return
 
         pools, line, dry_run = task
@@ -81,7 +81,7 @@ def insert_appsinstalled(queue, device_memc):
 
         if not memc_addr:
             errors += 1
-            logging.error('Unknow device type: %s'.format(appsinstalled.dev_type))
+            logging.error('Unknow device type: %s', appsinstalled.dev_type)
             continue
 
         memc_pool = pools[memc_addr]
@@ -95,7 +95,7 @@ def insert_appsinstalled(queue, device_memc):
 
         try:
             if dry_run:
-                logging.debug('{} - {} -> {}'.format(memc_addr, key, str(ua).replace('\n', ' ')))
+                logging.debug('%s - %s -> %s', memc_addr, key, str(ua).replace('\n', ' '))
                 status = 1
             else:
                 status = memc.set(key, ua.SerializeToString())
@@ -104,7 +104,7 @@ def insert_appsinstalled(queue, device_memc):
             else:
                 errors += 1
         except Exception as e:
-            logging.exception('Cannot write to memc {}: {}'.format(memc_addr, e))
+            logging.exception('Cannot write to memc %s: %s', memc_addr, e)
 
         memc_pool.put(memc)
 
@@ -130,13 +130,16 @@ def main(options):
         thread.start()
 
     for fn in glob.iglob(options.pattern):
-        logging.info('Processing %s' % fn)
+        logging.info('Processing %s', fn)
+        lines_counter = 0
         fd = gzip.open(fn)
         for line in fd:
             line = line.strip()
             if not line:
                 continue
+            lines_counter += 1
             queue.put((pools, line, options.dry))
+        logging.info('File %s | Total records inserted: %s', fn, lines_counter)
         fd.close()
         dot_rename(fn)
 
@@ -178,9 +181,10 @@ if __name__ == '__main__':
         prototest()
         sys.exit(0)
 
-    logging.info('Memc loader started with options: {}'.format(opts))
+    logging.info('Memc loader started with options: %s', opts)
+
     try:
         main(opts)
     except Exception as e:
-        logging.exception('Unexpected error: {}'.format(e))
+        logging.exception('Unexpected error: %s', e)
         sys.exit(1)
