@@ -55,24 +55,16 @@ def parse_appsinstalled(line):
     return AppsInstalled(dev_type, dev_id, lat, lon, apps)
 
 
-def insert_appsinstalled(queue, device_memc, dry_run):
+def insert_appsinstalled(queue, process_queue, device_memc, dry_run):
     processed = errors = 0
 
     while True:
         try:
             task = queue.get(timeout=0.1)
         except Queue.Empty:
-            logging.info('%s | %s | Records inserted: %s', multiprocessing.current_process().name,
-                         threading.current_thread().name, processed)
-            if processed:
-                err_rate = float(errors) / processed
-                if err_rate < NORMAL_ERR_RATE:
-                    logging.info('%s | %s | Acceptable error rate (%s). Successfull load',
-                                 multiprocessing.current_process().name, threading.current_thread().name, err_rate)
-                else:
-                    logging.error('%s | %s | High error rate (%s > %s). Failed load',
-                                  multiprocessing.current_process().name, threading.current_thread().name, err_rate,
-                                  NORMAL_ERR_RATE)
+            logging.info('%s | %s | Records processed: %d | Records errors: %d', multiprocessing.current_process().name,
+                         threading.current_thread().name, processed, errors)
+            process_queue.put((processed, errors))
             return
 
         pools, line = task
@@ -117,10 +109,11 @@ def insert_appsinstalled(queue, device_memc, dry_run):
 def handle_log((fn, device_memc, threads_cnt, dry_run)):
     pools = collections.defaultdict(Queue.Queue)
     queue = Queue.Queue()
+    process_queue = Queue.Queue()
     workers = []
 
     for i in range(threads_cnt):
-        thread = threading.Thread(target=insert_appsinstalled, args=(queue, device_memc, dry_run))
+        thread = threading.Thread(target=insert_appsinstalled, args=(queue, process_queue, device_memc, dry_run))
         thread.daemon = True
         workers.append(thread)
 
@@ -139,11 +132,30 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
         queue.put((pools, line))
     fd.close()
 
-    logging.info('%s | Finished file %s | Total records inserted: %s', multiprocessing.current_process().name, fn,
+    logging.info('%s | Finished read file %s | Total records readed: %s', multiprocessing.current_process().name, fn,
                  lines_counter)
 
     for thread in workers:
         thread.join()
+
+    processed = errors = 0
+    while not process_queue.empty():
+        worker_processed, worker_errors = process_queue.get(timeout=0.1)
+        processed += worker_processed
+        errors += worker_errors
+
+    logging.info('%s | Finished processing file %s | Total records processed: %d | Total records errors: %d',
+                 multiprocessing.current_process().name, fn, processed, errors)
+
+    if processed:
+        err_rate = float(errors) / processed
+        if err_rate < NORMAL_ERR_RATE:
+            logging.info('%s | File: %s | Acceptable error rate (%s). Successfull load',
+                         multiprocessing.current_process().name, fn, err_rate)
+        else:
+            logging.error('%s | File: %s | High error rate (%s > %s). Failed load',
+                          multiprocessing.current_process().name, fn, err_rate,
+                          NORMAL_ERR_RATE)
 
     return fn
 
