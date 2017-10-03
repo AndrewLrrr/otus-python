@@ -13,10 +13,13 @@ from optparse import OptionParser
 # brew install protobuf
 # protoc  --python_out=. ./appsinstalled.proto
 # pip install protobuf
+import time
+
 import appsinstalled_pb2
 # pip install python-memcached
 import memcache
 
+MEMCACHE_SOCKET_TIMEOUT = 2
 NORMAL_ERR_RATE = 0.01
 AppsInstalled = collections.namedtuple('AppsInstalled', ['dev_type', 'dev_id', 'lat', 'lon', 'apps'])
 
@@ -55,6 +58,17 @@ def parse_appsinstalled(line):
     return AppsInstalled(dev_type, dev_id, lat, lon, apps)
 
 
+def set_appsinstalled(memc, data, tries=3, delay=0.5, backoff=2):
+    status = memc.set(*data)
+    mtries, mdelay = tries, delay
+    while status == 0 and mtries > 0:
+        time.sleep(mdelay)
+        status = memc.set(*data)
+        mtries -= 1
+        mdelay *= backoff
+    return status != 0
+
+
 def insert_appsinstalled(queue, process_queue, device_memc, dry_run):
     processed = errors = 0
 
@@ -86,20 +100,19 @@ def insert_appsinstalled(queue, process_queue, device_memc, dry_run):
         try:
             memc = memc_pool.get(timeout=0.01)
         except Queue.Empty:
-            memc = memcache.Client([memc_addr])
+            memc = memcache.Client([memc_addr], socket_timeout=MEMCACHE_SOCKET_TIMEOUT)
 
         key, ua = buf_appsinstalled(appsinstalled)
 
         try:
             if dry_run:
                 logging.debug('%s - %s -> %s', memc_addr, key, str(ua).replace('\n', ' '))
-                status = 1
             else:
-                status = memc.set(key, ua.SerializeToString())
-            if status != 0:
-                processed += 1
-            else:
-                errors += 1
+                status = set_appsinstalled(memc, (key, ua.SerializeToString()))
+                if status:
+                    processed += 1
+                else:
+                    errors += 1
         except Exception as e:
             logging.exception('Cannot write to memc %s: %s', memc_addr, e)
 
