@@ -156,7 +156,7 @@ def main(options):
         'dvid': options.dvid,
     }
 
-    pool = multiprocessing.Pool(int(options.pool))
+    pool = multiprocessing.Pool(int(options.workers))
     fargs = []
 
     for fn in glob.iglob(options.pattern):
@@ -196,7 +196,7 @@ if __name__ == '__main__':
     op.add_option('--adid', action='store', default='127.0.0.1:33015')
     op.add_option('--dvid', action='store', default='127.0.0.1:33016')
     op.add_option('--threads', action='store', default=4)
-    op.add_option('--pool', action='store', default=2)
+    op.add_option('--workers', action='store', default=2)
     (opts, args) = op.parse_args()
     logging.basicConfig(filename=opts.log, level=logging.INFO if not opts.dry else logging.DEBUG,
                         format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
