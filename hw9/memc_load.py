@@ -9,6 +9,7 @@ import logging
 import collections
 import threading
 import multiprocessing
+from itertools import islice
 from optparse import OptionParser
 # brew install protobuf
 # protoc  --python_out=. ./appsinstalled.proto
@@ -22,6 +23,8 @@ import memcache
 MEMCACHE_SOCKET_TIMEOUT = 2
 NORMAL_ERR_RATE = 0.01
 AppsInstalled = collections.namedtuple('AppsInstalled', ['dev_type', 'dev_id', 'lat', 'lon', 'apps'])
+SENTINEL = object()
+CHUNK_SIZE = 100
 
 
 def dot_rename(path):
@@ -61,7 +64,7 @@ def parse_appsinstalled(line):
 def set_appsinstalled(memc, data, tries=3, delay=0.5, backoff=2):
     status = memc.set(*data)
     mtries, mdelay = tries, delay
-    while status == 0 and mtries > 0:
+    while not status and mtries > 0:
         time.sleep(mdelay)
         status = memc.set(*data)
         mtries -= 1
@@ -73,55 +76,63 @@ def insert_appsinstalled(queue, process_queue, device_memc, dry_run):
     processed = errors = 0
 
     while True:
-        try:
-            task = queue.get(timeout=0.1)
-        except Queue.Empty:
+        task = queue.get(timeout=0.1)
+
+        if task == SENTINEL:
+            queue.task_done()
             logging.info('%s | %s | Records processed: %d | Records errors: %d', multiprocessing.current_process().name,
                          threading.current_thread().name, processed, errors)
             process_queue.put((processed, errors))
-            return
+            break
 
-        pools, line = task
-        appsinstalled = parse_appsinstalled(line)
+        pools, chunk = task
 
-        if not appsinstalled:
-            errors += 1
-            continue
+        for line in chunk:
+            line = line.strip()
 
-        memc_addr = device_memc.get(appsinstalled.dev_type)
+            if not line:
+                continue
 
-        if not memc_addr:
-            errors += 1
-            logging.error('Unknow device type: %s', appsinstalled.dev_type)
-            continue
+            appsinstalled = parse_appsinstalled(line)
 
-        memc_pool = pools[memc_addr]
+            if not appsinstalled:
+                errors += 1
+                continue
 
-        try:
-            memc = memc_pool.get(timeout=0.01)
-        except Queue.Empty:
-            memc = memcache.Client([memc_addr], socket_timeout=MEMCACHE_SOCKET_TIMEOUT)
+            memc_addr = device_memc.get(appsinstalled.dev_type)
 
-        key, ua = buf_appsinstalled(appsinstalled)
+            if not memc_addr:
+                errors += 1
+                logging.error('Unknow device type: %s', appsinstalled.dev_type)
+                continue
 
-        try:
-            if dry_run:
-                logging.debug('%s - %s -> %s', memc_addr, key, str(ua).replace('\n', ' '))
-            else:
-                status = set_appsinstalled(memc, (key, ua.SerializeToString()))
-                if status:
-                    processed += 1
+            memc_pool = pools[memc_addr]
+
+            try:
+                memc = memc_pool.get(timeout=0.01)
+            except Queue.Empty:
+                memc = memcache.Client([memc_addr], socket_timeout=MEMCACHE_SOCKET_TIMEOUT)
+
+            key, ua = buf_appsinstalled(appsinstalled)
+
+            try:
+                if dry_run:
+                    logging.debug('%s - %s -> %s', memc_addr, key, str(ua).replace('\n', ' '))
                 else:
-                    errors += 1
-        except Exception as e:
-            logging.exception('Cannot write to memc %s: %s', memc_addr, e)
+                    status = set_appsinstalled(memc, (key, ua.SerializeToString()))
+                    if status:
+                        processed += 1
+                    else:
+                        errors += 1
+            except Exception as e:
+                logging.exception('Cannot write to memc %s: %s', memc_addr, e)
 
-        memc_pool.put(memc)
+            memc_pool.put(memc)
 
 
 def handle_log((fn, device_memc, threads_cnt, dry_run)):
     pools = collections.defaultdict(Queue.Queue)
-    queue = Queue.Queue()
+    queue = Queue.Queue(maxsize=threads_cnt)
     process_queue = Queue.Queue()
     workers = []
 
@@ -135,18 +146,26 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
 
     logging.info('%s | Processing %s', multiprocessing.current_process().name, fn)
 
-    lines_counter = 0
+    read = 0
     fd = gzip.open(fn)
-    for line in fd:
-        line = line.strip()
-        if not line:
+    gzip.open(fn)
+    chunk = list(islice(fd, CHUNK_SIZE))
+    while all(w.is_alive() for w in workers):
+        if not chunk:
+            break
+        try:
+            queue.put((pools, chunk))
+        except Queue.Full:
             continue
-        lines_counter += 1
-        queue.put((pools, line))
+        read += len(chunk)
+        chunk = list(islice(fd, CHUNK_SIZE))
     fd.close()
 
-    logging.info('%s | Finished read file %s | Total records readed: %s', multiprocessing.current_process().name, fn,
-                 lines_counter)
+    logging.info('%s | File: %s | Total records readed: %s', multiprocessing.current_process().name, fn,
+                 read)
+
+    for _ in workers:
+        queue.put(SENTINEL)
 
     for thread in workers:
         thread.join()
@@ -157,7 +176,7 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
         processed += worker_processed
         errors += worker_errors
 
-    logging.info('%s | Finished processing file %s | Total records processed: %d | Total records errors: %d',
+    logging.info('%s | File: %s | Total records processed: %d | Total records errors: %d',
                  multiprocessing.current_process().name, fn, processed, errors)
 
     if processed:
