@@ -21,13 +21,13 @@ import memcache
 
 MEMCACHE_SOCKET_TIMEOUT = 2
 NORMAL_ERR_RATE = 0.01
-CHUNK_SIZE = 50
+CHUNK_SIZE = 100
 SENTINEL = object()
 
 AppsInstalled = collections.namedtuple('AppsInstalled', ['dev_type', 'dev_id', 'lat', 'lon', 'apps'])
 
 
-class ConnectionThread(threading.Thread):
+class MemcachedThread(threading.Thread):
     def __init__(self, memc_addr, queue, stats_queue, dry_run):
         threading.Thread.__init__(self)
         self.daemon = True
@@ -39,15 +39,16 @@ class ConnectionThread(threading.Thread):
         self.errors = 0
 
     @staticmethod
-    def save(connection, data, tries=3, delay=0.5, backoff=2):
-        status = connection.set(*data)
+    def _set_multi(connection, keys_map, tries=3, delay=0.5, backoff=2):
+        failed_keys = connection.set_multi(keys_map)
         mtries, mdelay = tries, delay
-        while not status and mtries > 0:
+        while failed_keys and mtries > 0:
             time.sleep(mdelay)
-            status = connection.set(*data)
+            keys_map = {k: v for k, v in keys_map.items() if k in failed_keys}
+            failed_keys = connection.set_multi(keys_map)
             mtries -= 1
             mdelay *= backoff
-        return status != 0
+        return failed_keys
 
     def run(self):
         connection = memcache.Client([self.memc_addr], socket_timeout=MEMCACHE_SOCKET_TIMEOUT)
@@ -63,19 +64,18 @@ class ConnectionThread(threading.Thread):
                     self.queue.task_done()
                     break
 
-                for task in tasks:
-                    key, ua = task
-                    try:
-                        if self.dry_run:
+                try:
+                    if self.dry_run:
+                        for task in tasks:
+                            key, ua = task
                             logging.debug('%s - %s -> %s', self.memc_addr, key, str(ua).replace('\n', ' '))
-                        else:
-                            status = self.save(connection, (key, ua.SerializeToString()))
-                            if status:
-                                self.processed += 1
-                            else:
-                                self.errors += 1
-                    except Exception as e:
-                        logging.exception('Cannot write to memc %s: %s', self.memc_addr, e)
+                    else:
+                        keys_map = {k: v.SerializeToString() for k, v in tasks}
+                        failed_keys = self._set_multi(connection, keys_map)
+                        self.processed += len(tasks) - len(failed_keys)
+                        self.errors += len(failed_keys)
+                except Exception as e:
+                    logging.exception('Cannot write to memc %s: %s', self.memc_addr, e)
 
                 self.queue.task_done()
             except Queue.Empty:
@@ -166,11 +166,11 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
 
     # Start connection handle threads
     for k, addr in device_memc.items():
-        connection_thread = ConnectionThread(addr, conn_pools[k], stats_queue, dry_run)
-        connections.append(connection_thread)
+        memcached_thread = MemcachedThread(addr, conn_pools[k], stats_queue, dry_run)
+        connections.append(memcached_thread)
 
-    for connection_thread in connections:
-        connection_thread.start()
+    for memcached_thread in connections:
+        memcached_thread.start()
 
     # Start lines handle threads
     for i in range(threads_cnt):
@@ -212,8 +212,8 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
     for k, addr in device_memc.items():
         conn_pools[k].put(SENTINEL)
 
-    for connection_thread in connections:
-        connection_thread.join()
+    for memcached_thread in connections:
+        memcached_thread.join()
 
     processed = errors = 0
     while not stats_queue.empty():
