@@ -72,18 +72,20 @@ def set_appsinstalled(memc, data, tries=3, delay=0.5, backoff=2):
     return status != 0
 
 
-def insert_appsinstalled(queue, stats_queue, pools, lock, device_memc, dry_run):
+def insert_appsinstalled(queue, stats_queue, device_memc, dry_run):
     processed = errors = 0
 
     while True:
-        chunk = queue.get(timeout=0.1)
+        task = queue.get(timeout=0.1)
 
-        if chunk == SENTINEL:
+        if task == SENTINEL:
             queue.task_done()
             logging.info('%s | %s | Records processed: %d | Records errors: %d', multiprocessing.current_process().name,
                          threading.current_thread().name, processed, errors)
             stats_queue.put((processed, errors))
             break
+
+        pools, chunk = task
 
         for line in chunk:
             line = line.strip()
@@ -104,20 +106,20 @@ def insert_appsinstalled(queue, stats_queue, pools, lock, device_memc, dry_run):
                 logging.error('Unknow device type: %s', appsinstalled.dev_type)
                 continue
 
-            lock.acquire()
-            try:
-                if memc_addr not in pools:
-                    pools[memc_addr] = memcache.Client([memc_addr], socket_timeout=MEMCACHE_SOCKET_TIMEOUT)
-            finally:
-                lock.release()
-
             key, ua = buf_appsinstalled(appsinstalled)
+
+            memc_pool = pools[memc_addr]
+
+            try:
+                memc = memc_pool.get(timeout=0.01)
+            except Queue.Empty:
+                memc = memcache.Client([memc_addr])
 
             try:
                 if dry_run:
                     logging.debug('%s - %s -> %s', memc_addr, key, str(ua).replace('\n', ' '))
                 else:
-                    status = set_appsinstalled(pools[memc_addr], (key, ua.SerializeToString()))
+                    status = set_appsinstalled(memc, (key, ua.SerializeToString()))
                     if status:
                         processed += 1
                     else:
@@ -125,17 +127,18 @@ def insert_appsinstalled(queue, stats_queue, pools, lock, device_memc, dry_run):
             except Exception as e:
                 logging.exception('Cannot write to memc %s: %s', memc_addr, e)
 
+            memc_pool.put(memc)
+
 
 def handle_log((fn, device_memc, threads_cnt, dry_run)):
     queue = Queue.Queue(maxsize=threads_cnt)
     stats_queue = Queue.Queue()
-    lock = threading.RLock()
-    pools = {}
+    pools = collections.defaultdict(Queue.Queue)
     workers = []
 
     for i in range(threads_cnt):
         thread = threading.Thread(
-            target=insert_appsinstalled, args=(queue, stats_queue, pools, lock, device_memc, dry_run)
+            target=insert_appsinstalled, args=(queue, stats_queue, device_memc, dry_run)
         )
         thread.daemon = True
         workers.append(thread)
@@ -153,7 +156,7 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
         if not chunk:
             break
         try:
-            queue.put(chunk)
+            queue.put((pools, chunk))
         except Queue.Full:
             continue
         read += len(chunk)
