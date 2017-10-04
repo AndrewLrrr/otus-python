@@ -44,7 +44,7 @@ sys   3m30.204s
 ```
 > time python memc_load.py --pattern=*.tsv.gz --workers=2 --threads=4
 
-real  2m51.104s
-user  3m3.216s
-sys   1m44.548s
+real  2m50.913s
+user  3m4.364s
+sys   1m43.352s
 ```

@@ -164,7 +164,7 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
     connections = []
     conn_pools = collections.defaultdict(Queue.Queue)
 
-    # Start connection handle threads
+    # Start memcached connection handle threads
     for k, addr in device_memc.items():
         memcached_thread = MemcachedThread(addr, conn_pools[k], stats_queue, dry_run)
         connections.append(memcached_thread)
@@ -185,7 +185,6 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
 
     read = 0
     fd = gzip.open(fn)
-    gzip.open(fn)
     chunk = list(islice(fd, CHUNK_SIZE))
     while all(w.is_alive() for w in workers):
         if not chunk:
@@ -208,7 +207,7 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
     for thread in workers:
         thread.join()
 
-    # Finish connection handle threads
+    # Finish memcached connection handle threads
     for k, addr in device_memc.items():
         conn_pools[k].put(SENTINEL)
 
