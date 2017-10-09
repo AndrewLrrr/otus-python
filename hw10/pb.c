@@ -13,7 +13,8 @@ typedef struct pbheader_s {
     uint16_t type;
     uint16_t length;
 } pbheader_t;
-#define PBHEADER_INIT {MAGIC, 0, 0}
+
+#define PBHEADER_INIT(x) pbheader_t x = {MAGIC, 0, 0}
 
 
 // https://github.com/protobuf-c/protobuf-c/wiki/Examples
@@ -64,6 +65,90 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
     if (!PyArg_ParseTuple(args, "Os", &o, &path))
         return NULL;
+
+    PyObject *iterator = PyObject_GetIter(o);
+    PyObject *item;
+
+    if (! iterator) {
+        printf("error not iterator\n");
+    }
+
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+    char *key_str;
+
+    const char *device_key = "device";
+    const char *type_key = "type";
+    const char *id_key = "id";
+    const char *lat_key = "lat";
+    const char *lon_key = "lon";
+    const char *apps_key = "apps";
+
+    while (item = PyIter_Next(iterator)) {
+        if (! item) {
+            break;
+        }
+
+        while (PyDict_Next(item, &pos, &key, &value)) {
+            key_str = PyString_AsString(key);
+            if (strcmp(key_str, device_key) == 0) {
+                PyObject *sub_key, *sub_value;
+                Py_ssize_t sub_pos = 0;
+                char *sub_key_str;
+
+                while (PyDict_Next(value, &sub_pos, &sub_key, &sub_value)) {
+                    sub_key_str = PyString_AsString(sub_key);
+                    if (strcmp(sub_key_str, id_key) == 0) {
+                        printf("id - %s\n", PyString_AsString(sub_value));
+                    }
+                    if (strcmp(sub_key_str, type_key) == 0) {
+                        printf("type - %s\n", PyString_AsString(sub_value));
+                    }
+                }
+
+                sub_pos = 0;
+            }
+
+            if (strcmp(key_str, lat_key) == 0) {
+                printf("lat - %.8f\n", PyFloat_AsDouble(value));
+            }
+
+            if (strcmp(key_str, lon_key) == 0) {
+                printf("lon - %.8f\n", PyFloat_AsDouble(value));
+            }
+
+            if (strcmp(key_str, apps_key) == 0) {
+                PyObject *app_id;
+                int apps_len = 0;
+                int i = 0;
+
+                apps_len = PySequence_Size(value);
+                if (PyList_Check(value) && apps_len > 0) {
+                    while (apps_len > 0) {
+                        app_id = PyList_GET_ITEM(value, i);
+                        printf("app_id - %d\n", PyInt_AsLong(app_id));
+                        apps_len--;
+                        i++;
+                    }
+                }
+            }
+        }
+
+        pos = 0;
+
+        printf("\n\n");
+
+        Py_DECREF(item);
+    }
+
+    Py_DECREF(iterator);
+
+    if (PyErr_Occurred()) {
+        printf("propagate error\n");
+    }
+    else {
+        printf("continue doing useful work\n");
+    }
 
     printf("Write to: %s\n", path);
     Py_RETURN_NONE;
