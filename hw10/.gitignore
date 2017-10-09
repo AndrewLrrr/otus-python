@@ -1,0 +1,4 @@
+deviceapps.pb-c.*
+*.so
+pb.egg-info
+build
