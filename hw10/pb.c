@@ -60,24 +60,22 @@ void example() {
 // Pack them to DeviceApps protobuf and write to file with appropriate header
 // Return number of written bytes as Python integer
 static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
-    const char* path;
-    PyObject* o;
+    const char *path;
+    PyObject *o;
 
     if (!PyArg_ParseTuple(args, "Os", &o, &path))
         return NULL;
 
     PyObject *iterator = PyObject_GetIter(o);
     PyObject *item;
-    PyObject *key, *value;
-    Py_ssize_t pos = 0;
-    char *key_str;
+    unsigned bytes_written = 0;
 
     const char *device_key = "device";
-    const char *type_key = "type";
-    const char *id_key = "id";
-    const char *lat_key = "lat";
-    const char *lon_key = "lon";
-    const char *apps_key = "apps";
+    const char *type_key   = "type";
+    const char *id_key     = "id";
+    const char *lat_key    = "lat";
+    const char *lon_key    = "lon";
+    const char *apps_key   = "apps";
 
     if (! iterator) {
         PyErr_SetString(PyExc_ValueError, "First argument should be iterable");
@@ -89,70 +87,102 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
             break;
         }
 
-        while (PyDict_Next(item, &pos, &key, &value)) {
-            key_str = PyString_AsString(key);
-            if (strcmp(key_str, device_key) == 0) {
-                PyObject *sub_key, *sub_value;
-                Py_ssize_t sub_pos = 0;
-                char *sub_key_str;
+        if (! PyDict_Check(item)) {
+            PyErr_SetString(PyExc_ValueError, "The deviceapps type must be a dictionary");
+            return NULL;
+        }
 
-                while (PyDict_Next(value, &sub_pos, &sub_key, &sub_value)) {
-                    sub_key_str = PyString_AsString(sub_key);
-                    if (strcmp(sub_key_str, id_key) == 0) {
-                        printf("id - %s\n", PyString_AsString(sub_value));
-                    }
-                    if (strcmp(sub_key_str, type_key) == 0) {
-                        printf("type - %s\n", PyString_AsString(sub_value));
-                    }
-                }
+        DeviceApps msg = DEVICE_APPS__INIT;
+        DeviceApps__Device device = DEVICE_APPS__DEVICE__INIT;
+        void *buf;
+        unsigned len;
 
-                sub_pos = 0;
+        PyObject *device_val = PyDict_GetItemString(item, device_key);
+        PyObject *lat_val    = PyDict_GetItemString(item, lat_key);
+        PyObject *lon_val    = PyDict_GetItemString(item, lon_key);
+        PyObject *apps_val   = PyDict_GetItemString(item, apps_key);
+
+        if (device_val && PyDict_Check(device_val)) {
+            PyObject *id_val = PyDict_GetItemString(device_val, id_key);
+            PyObject *type_val = PyDict_GetItemString(device_val, type_key);
+            if (id_val && PyString_Check(id_val)) {
+                char *device_id = PyString_AsString(id_val);
+                device.has_id = 1;
+                device.id.data = (uint8_t*) device_id;
+                device.id.len = strlen(device_id);
+                printf("device_id - %s\n", device_id);
             }
-
-            if (strcmp(key_str, lat_key) == 0) {
-                printf("lat - %.8f\n", PyFloat_AsDouble(value));
+            if (type_val && PyString_Check(type_val)) {
+                char *device_type = PyString_AsString(type_val);
+                device.has_type = 1;
+                device.type.data = (uint8_t*) device_type;
+                device.type.len = strlen(device_type);
+                printf("device_type - %s\n", device_type);
             }
+        }
 
-            if (strcmp(key_str, lon_key) == 0) {
-                printf("lon - %.8f\n", PyFloat_AsDouble(value));
-            }
+        msg.device = &device;
 
-            if (strcmp(key_str, apps_key) == 0) {
-                PyObject *app_id;
-                int n_apps = 0;
-                int i = 0;
+        if (lat_val && PyFloat_Check(lat_val)) {
+            msg.has_lat = 1;
+            msg.lat = PyFloat_AsDouble(lat_val);
+            printf("lat - %.8f\n", msg.lat);
+        }
 
-                n_apps = PySequence_Size(value);
-                if (PyList_Check(value) && n_apps > 0) {
-                    while (n_apps > 0) {
-                        app_id = PyList_GET_ITEM(value, i);
-                        printf("app_id - %d\n", PyInt_AsLong(app_id));
-                        n_apps--;
-                        i++;
-                    }
+        if (lon_val && PyFloat_Check(lon_val)) {
+            msg.has_lon = 1;
+            msg.lon = PyFloat_AsDouble(lon_val);
+            printf("lat - %.8f\n", msg.lon);
+        }
+
+        if (apps_val && PyList_Check(apps_val)) {
+            int i = 0;
+            int n_apps = PySequence_Size(apps_val);
+            msg.n_apps = n_apps;
+            if (n_apps > 0) {
+                msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
+                while (n_apps > 0) {
+                    PyObject *app = PyList_GET_ITEM(apps_val, i);
+                    msg.apps[i] = app;
+                    printf("app_id - %d\n", PyInt_AsLong(app));
+                    n_apps--;
+                    i++;
+                    Py_XDECREF(app);
                 }
             }
         }
 
-        pos = 0;
+        len = device_apps__get_packed_size(&msg);
+        buf = malloc(len);
+        device_apps__pack(&msg, buf);
+
+        fprintf(stderr,"Writing %d serialized bytes\n",len); // See the length of message
+        fwrite(buf, len, 1, stdout); // Write to stdout to allow direct command line piping
+
+        bytes_written += len;
+
+        free(msg.apps);
+        free(buf);
+
+        Py_XDECREF(device_val);
+        Py_XDECREF(lat_val);
+        Py_XDECREF(lon_val);
+        Py_XDECREF(apps_val);
+        Py_XDECREF(item);
 
         printf("\n\n");
-
-        Py_DECREF(item);
     }
 
-    Py_DECREF(iterator);
+    Py_XDECREF(iterator);
 
     if (PyErr_Occurred()) {
         PyErr_SetString(PyExc_RuntimeError, "Unknown error has occurred");
         return NULL;
     }
-    else {
-        printf("continue doing useful work\n");
-    }
 
     printf("Write to: %s\n", path);
-    Py_RETURN_NONE;
+
+    return Py_BuildValue("i", bytes_written);
 }
 
 // Unpack only messages with type == DEVICE_APPS_TYPE
