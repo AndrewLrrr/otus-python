@@ -14,7 +14,7 @@ typedef struct pbheader_s {
     uint16_t length;
 } pbheader_t;
 
-#define PBHEADER_INIT(x) pbheader_t x = {MAGIC, 0, 0}
+#define PBHEADER_INIT {MAGIC, 0, 0}
 
 
 // https://github.com/protobuf-c/protobuf-c/wiki/Examples
@@ -68,11 +68,6 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
     PyObject *iterator = PyObject_GetIter(o);
     PyObject *item;
-
-    if (! iterator) {
-        printf("error not iterator\n");
-    }
-
     PyObject *key, *value;
     Py_ssize_t pos = 0;
     char *key_str;
@@ -83,6 +78,11 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     const char *lat_key = "lat";
     const char *lon_key = "lon";
     const char *apps_key = "apps";
+
+    if (! iterator) {
+        PyErr_SetString(PyExc_ValueError, "First argument should be iterable");
+        return NULL;
+    }
 
     while (item = PyIter_Next(iterator)) {
         if (! item) {
@@ -119,15 +119,15 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
             if (strcmp(key_str, apps_key) == 0) {
                 PyObject *app_id;
-                int apps_len = 0;
+                int n_apps = 0;
                 int i = 0;
 
-                apps_len = PySequence_Size(value);
-                if (PyList_Check(value) && apps_len > 0) {
-                    while (apps_len > 0) {
+                n_apps = PySequence_Size(value);
+                if (PyList_Check(value) && n_apps > 0) {
+                    while (n_apps > 0) {
                         app_id = PyList_GET_ITEM(value, i);
                         printf("app_id - %d\n", PyInt_AsLong(app_id));
-                        apps_len--;
+                        n_apps--;
                         i++;
                     }
                 }
@@ -144,7 +144,8 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     Py_DECREF(iterator);
 
     if (PyErr_Occurred()) {
-        printf("propagate error\n");
+        PyErr_SetString(PyExc_RuntimeError, "Unknown error has occurred");
+        return NULL;
     }
     else {
         printf("continue doing useful work\n");
