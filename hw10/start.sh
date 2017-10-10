@@ -9,7 +9,8 @@ yum install -y  gcc \
 				protobuf-c-devel \
 				python-devel \
 				python-setuptools \
-				gdb 
+				gdb \
+				zlib-devel
 
 ulimit -c unlimited
 cd /tmp/otus/

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <zlib.h>
 #include "deviceapps.pb-c.h"
 
 #define MAGIC  0xFFFFFFFF
@@ -110,14 +111,12 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
                 device.has_id = 1;
                 device.id.data = (uint8_t*) device_id;
                 device.id.len = strlen(device_id);
-                printf("device_id - %s\n", device_id);
             }
             if (type_val && PyString_Check(type_val)) {
                 char *device_type = PyString_AsString(type_val);
                 device.has_type = 1;
                 device.type.data = (uint8_t*) device_type;
                 device.type.len = strlen(device_type);
-                printf("device_type - %s\n", device_type);
             }
         }
 
@@ -126,13 +125,11 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         if (lat_val && PyFloat_Check(lat_val)) {
             msg.has_lat = 1;
             msg.lat = PyFloat_AsDouble(lat_val);
-            printf("lat - %.8f\n", msg.lat);
         }
 
         if (lon_val && PyFloat_Check(lon_val)) {
             msg.has_lon = 1;
             msg.lon = PyFloat_AsDouble(lon_val);
-            printf("lat - %.8f\n", msg.lon);
         }
 
         if (apps_val && PyList_Check(apps_val)) {
@@ -143,10 +140,11 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
                 msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
                 while (n_apps > 0) {
                     PyObject *app = PyList_GET_ITEM(apps_val, i);
-                    msg.apps[i] = app;
-                    printf("app_id - %d\n", PyInt_AsLong(app));
+                    if (PyInt_Check(app)) {
+                        msg.apps[i] = PyInt_AsLong(app);
+                        i++;
+                    }
                     n_apps--;
-                    i++;
                     Py_XDECREF(app);
                 }
             }
@@ -156,11 +154,16 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         buf = malloc(len);
         device_apps__pack(&msg, buf);
 
-        fprintf(stderr,"Writing %d serialized bytes\n",len); // See the length of message
-        fwrite(buf, len, 1, stdout); // Write to stdout to allow direct command line piping
+        pbheader_t pbheader = PBHEADER_INIT;
+        pbheader.type = DEVICE_APPS_TYPE;
+        pbheader.length = len;
 
-        bytes_written += len;
+        gzFile fi = gzopen(path, "a6h");
+        gzwrite(fi, &pbheader, sizeof(pbheader)); // Write protobuf header
+        gzwrite(fi, buf, len); // Write protobuf message
+        gzclose(fi);
 
+        bytes_written += (len + sizeof(pbheader));
         free(msg.apps);
         free(buf);
 
@@ -169,8 +172,6 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         Py_XDECREF(lon_val);
         Py_XDECREF(apps_val);
         Py_XDECREF(item);
-
-        printf("\n\n");
     }
 
     Py_XDECREF(iterator);
@@ -179,8 +180,6 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         PyErr_SetString(PyExc_RuntimeError, "Unknown error has occurred");
         return NULL;
     }
-
-    printf("Write to: %s\n", path);
 
     return Py_BuildValue("i", bytes_written);
 }
