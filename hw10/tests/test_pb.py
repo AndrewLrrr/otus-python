@@ -28,23 +28,26 @@ class TestPB(unittest.TestCase):
         self.assertTrue(bytes_written > 0)
         with gzip.open(TEST_FILE, 'r') as fi:
             header_bites = []
-            message_bytes = []
             message_length = 0
+            messages_bytes = 0
             for bytes in fi.readlines():
                 for byte in bytes:
-                    if message_length > 0:
-                        message_bytes.append(byte)
+                    if message_length > 1:
+                        messages_bytes += 1
                         message_length -= 1
                     else:
                         if len(header_bites) != header_size:
                             header_bites.append(byte)
                         else:
                             magic, device_type, message_length = unpack('Ihh', ''.join(header_bites))
+                            header_bites = []
                             if magic == MAGIC:
+                                messages_bytes += 1
                                 message_counter += 1
                             self.assertEqual(magic, MAGIC)
                             self.assertEqual(device_type, DEVICE_APPS_TYPE)
             self.assertEqual(message_counter, len(self.deviceapps))
+            self.assertEqual(bytes_written - header_size * message_counter, messages_bytes)
 
     @unittest.skip("Optional problem")
     def test_read(self):
