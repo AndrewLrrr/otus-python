@@ -119,7 +119,14 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         pbheader.length = len;
 
         gzFile fi = gzopen(path, "a6h");
-        gzwrite(fi, &pbheader, sizeof(pbheader)); // Write protobuf header
+
+        if (fi == NULL) {
+            PyErr_SetString(PyExc_ValueError, "Cannot open the file");
+            Py_DECREF(item);
+            return NULL;
+        }
+
+        gzwrite(fi, &pbheader, sizeof(pbheader)); // Write header
         gzwrite(fi, buf, len); // Write protobuf message
         gzclose(fi);
 
