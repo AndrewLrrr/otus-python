@@ -17,49 +17,10 @@ typedef struct pbheader_s {
 
 #define PBHEADER_INIT {MAGIC, 0, 0}
 
-
-// https://github.com/protobuf-c/protobuf-c/wiki/Examples
-void example() {
-    DeviceApps msg = DEVICE_APPS__INIT;
-    DeviceApps__Device device = DEVICE_APPS__DEVICE__INIT;
-    void *buf;
-    unsigned len;
-
-    char *device_id = "e7e1a50c0ec2747ca56cd9e1558c0d7c";
-    char *device_type = "idfa";
-    device.has_id = 1;
-    device.id.data = (uint8_t*)device_id;
-    device.id.len = strlen(device_id);
-    device.has_type = 1;
-    device.type.data = (uint8_t*)device_type;
-    device.type.len = strlen(device_type);
-    msg.device = &device;
-
-    msg.has_lat = 1;
-    msg.lat = 67.7835424444;
-    msg.has_lon = 1;
-    msg.lon = -22.8044005471;
-
-    msg.n_apps = 3;
-    msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
-    msg.apps[0] = 42;
-    msg.apps[1] = 43;
-    msg.apps[2] = 44;
-    len = device_apps__get_packed_size(&msg);
-
-    buf = malloc(len);
-    device_apps__pack(&msg, buf);
-
-    fprintf(stderr,"Writing %d serialized bytes\n",len); // See the length of message
-    fwrite(buf, len, 1, stdout); // Write to stdout to allow direct command line piping
-
-    free(msg.apps);
-    free(buf);
-}
-
 // Read iterator of Python dicts
 // Pack them to DeviceApps protobuf and write to file with appropriate header
 // Return number of written bytes as Python integer
+// https://github.com/protobuf-c/protobuf-c/wiki/Examples
 static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     const char *path;
     PyObject *o;
@@ -71,12 +32,12 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     PyObject *item;
     unsigned bytes_written = 0;
 
-    const char *device_key = "device";
-    const char *type_key   = "type";
-    const char *id_key     = "id";
-    const char *lat_key    = "lat";
-    const char *lon_key    = "lon";
-    const char *apps_key   = "apps";
+    const char *DEVICE_KEY = "device";
+    const char *TYPE_KEY   = "type";
+    const char *ID_KEY     = "id";
+    const char *LAT_KEY    = "lat";
+    const char *LON_KEY    = "lon";
+    const char *APPS_KEY   = "apps";
 
     if (! iterator) {
         PyErr_SetString(PyExc_ValueError, "First argument should be iterable");
@@ -98,14 +59,14 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         void *buf;
         unsigned len;
 
-        PyObject *device_val = PyDict_GetItemString(item, device_key);
-        PyObject *lat_val    = PyDict_GetItemString(item, lat_key);
-        PyObject *lon_val    = PyDict_GetItemString(item, lon_key);
-        PyObject *apps_val   = PyDict_GetItemString(item, apps_key);
+        PyObject *device_val = PyDict_GetItemString(item, DEVICE_KEY);
+        PyObject *lat_val    = PyDict_GetItemString(item, LAT_KEY);
+        PyObject *lon_val    = PyDict_GetItemString(item, LON_KEY);
+        PyObject *apps_val   = PyDict_GetItemString(item, APPS_KEY);
 
         if (device_val && PyDict_Check(device_val)) {
-            PyObject *id_val = PyDict_GetItemString(device_val, id_key);
-            PyObject *type_val = PyDict_GetItemString(device_val, type_key);
+            PyObject *id_val = PyDict_GetItemString(device_val, ID_KEY);
+            PyObject *type_val = PyDict_GetItemString(device_val, TYPE_KEY);
             if (id_val && PyString_Check(id_val)) {
                 char *device_id = PyString_AsString(id_val);
                 device.has_id = 1;
@@ -145,7 +106,6 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
                         i++;
                     }
                     n_apps--;
-                    Py_XDECREF(app);
                 }
             }
         }
@@ -167,14 +127,10 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         free(msg.apps);
         free(buf);
 
-        Py_XDECREF(device_val);
-        Py_XDECREF(lat_val);
-        Py_XDECREF(lon_val);
-        Py_XDECREF(apps_val);
-        Py_XDECREF(item);
+        Py_DECREF(item);
     }
 
-    Py_XDECREF(iterator);
+    Py_DECREF(iterator);
 
     if (PyErr_Occurred()) {
         PyErr_SetString(PyExc_RuntimeError, "Unknown error has occurred");
