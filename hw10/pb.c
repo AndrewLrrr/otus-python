@@ -63,6 +63,10 @@ size_t pack_and_write(PyObject *dict, gzFile fi) {
         msg.n_apps = n_apps;
         if (n_apps > 0) {
             msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
+            if (! msg.apps) {
+                PyErr_SetString(PyExc_ValueError, "Cannot allocate memory block");
+                return 0;
+            }
             while (n_apps > 0) {
                 PyObject *app = PyList_GET_ITEM(apps_val, i);
                 if (PyInt_Check(app)) {
@@ -75,14 +79,20 @@ size_t pack_and_write(PyObject *dict, gzFile fi) {
     }
 
     len = device_apps__get_packed_size(&msg);
+
     buf = malloc(len);
+    if (! buf) {
+        PyErr_SetString(PyExc_ValueError, "Cannot allocate memory block");
+        return 0;
+    }
+
     device_apps__pack(&msg, buf);
 
     pbheader_t pbheader = PBHEADER_INIT;
     pbheader.type = DEVICE_APPS_TYPE;
     pbheader.length = len;
 
-    gzwrite(fi, &pbheader, sizeof(pbheader)); // Write header
+    gzwrite(fi, &pbheader, sizeof(pbheader)); // Write message header
     gzwrite(fi, buf, len); // Write protobuf message
 
     free(msg.apps);
@@ -116,7 +126,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
     if (! fi) {
         PyErr_SetString(PyExc_ValueError, "Cannot open the file");
-        return 0;
+        return NULL;
     }
 
     while (item = PyIter_Next(iterator)) {
