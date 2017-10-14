@@ -17,12 +17,88 @@ typedef struct pbheader_s {
 
 #define PBHEADER_INIT {MAGIC, 0, 0}
 
+size_t pack_and_write(PyObject *dict, gzFile fi) {
+    DeviceApps msg = DEVICE_APPS__INIT;
+    DeviceApps__Device device = DEVICE_APPS__DEVICE__INIT;
+    unsigned len;
+    void *buf;
+
+    PyObject *device_val = PyDict_GetItemString(dict, "device");
+    PyObject *lat_val    = PyDict_GetItemString(dict, "lat");
+    PyObject *lon_val    = PyDict_GetItemString(dict, "lon");
+    PyObject *apps_val   = PyDict_GetItemString(dict, "apps");
+
+    if (device_val && PyDict_Check(device_val)) {
+        PyObject *id_val = PyDict_GetItemString(device_val, "id");
+        PyObject *type_val = PyDict_GetItemString(device_val, "type");
+        if (id_val && PyString_Check(id_val)) {
+            char *device_id = PyString_AsString(id_val);
+            device.has_id = 1;
+            device.id.data = (uint8_t*) device_id;
+            device.id.len = strlen(device_id);
+        }
+        if (type_val && PyString_Check(type_val)) {
+            char *device_type = PyString_AsString(type_val);
+            device.has_type = 1;
+            device.type.data = (uint8_t*) device_type;
+            device.type.len = strlen(device_type);
+        }
+    }
+
+    msg.device = &device;
+
+    if (lat_val && PyFloat_Check(lat_val)) {
+        msg.has_lat = 1;
+        msg.lat = PyFloat_AsDouble(lat_val);
+    }
+
+    if (lon_val && PyFloat_Check(lon_val)) {
+        msg.has_lon = 1;
+        msg.lon = PyFloat_AsDouble(lon_val);
+    }
+
+    if (apps_val && PyList_Check(apps_val)) {
+        int i = 0;
+        int n_apps = PySequence_Size(apps_val);
+        msg.n_apps = n_apps;
+        if (n_apps > 0) {
+            msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
+            while (n_apps > 0) {
+                PyObject *app = PyList_GET_ITEM(apps_val, i);
+                if (PyInt_Check(app)) {
+                    msg.apps[i] = PyInt_AsLong(app);
+                    i++;
+                }
+                n_apps--;
+            }
+        }
+    }
+
+    len = device_apps__get_packed_size(&msg);
+    buf = malloc(len);
+    device_apps__pack(&msg, buf);
+
+    pbheader_t pbheader = PBHEADER_INIT;
+    pbheader.type = DEVICE_APPS_TYPE;
+    pbheader.length = len;
+
+    gzwrite(fi, &pbheader, sizeof(pbheader)); // Write header
+    gzwrite(fi, buf, len); // Write protobuf message
+
+    free(msg.apps);
+    free(buf);
+
+    return (len + sizeof(pbheader));
+}
+
+
 // Read iterator of Python dicts
 // Pack them to DeviceApps protobuf and write to file with appropriate header
 // Return number of written bytes as Python integer
 // https://github.com/protobuf-c/protobuf-c/wiki/Examples
 static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     const char *path;
+    unsigned bytes_written = 0;
     PyObject *o;
 
     if (!PyArg_ParseTuple(args, "Os", &o, &path))
@@ -30,18 +106,17 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
     PyObject *iterator = PyObject_GetIter(o);
     PyObject *item;
-    unsigned bytes_written = 0;
-
-    const char *DEVICE_KEY = "device";
-    const char *TYPE_KEY   = "type";
-    const char *ID_KEY     = "id";
-    const char *LAT_KEY    = "lat";
-    const char *LON_KEY    = "lon";
-    const char *APPS_KEY   = "apps";
 
     if (! iterator) {
         PyErr_SetString(PyExc_ValueError, "First argument should be iterable");
         return NULL;
+    }
+
+    gzFile fi = gzopen(path, "a6h");
+
+    if (! fi) {
+        PyErr_SetString(PyExc_ValueError, "Cannot open the file");
+        return 0;
     }
 
     while (item = PyIter_Next(iterator)) {
@@ -51,91 +126,24 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
 
         if (! PyDict_Check(item)) {
             PyErr_SetString(PyExc_ValueError, "The deviceapps type must be a dictionary");
+            gzclose(fi);
             return NULL;
         }
 
-        DeviceApps msg = DEVICE_APPS__INIT;
-        DeviceApps__Device device = DEVICE_APPS__DEVICE__INIT;
-        void *buf;
-        unsigned len;
+        size_t len;
 
-        PyObject *device_val = PyDict_GetItemString(item, DEVICE_KEY);
-        PyObject *lat_val    = PyDict_GetItemString(item, LAT_KEY);
-        PyObject *lon_val    = PyDict_GetItemString(item, LON_KEY);
-        PyObject *apps_val   = PyDict_GetItemString(item, APPS_KEY);
-
-        if (device_val && PyDict_Check(device_val)) {
-            PyObject *id_val = PyDict_GetItemString(device_val, ID_KEY);
-            PyObject *type_val = PyDict_GetItemString(device_val, TYPE_KEY);
-            if (id_val && PyString_Check(id_val)) {
-                char *device_id = PyString_AsString(id_val);
-                device.has_id = 1;
-                device.id.data = (uint8_t*) device_id;
-                device.id.len = strlen(device_id);
-            }
-            if (type_val && PyString_Check(type_val)) {
-                char *device_type = PyString_AsString(type_val);
-                device.has_type = 1;
-                device.type.data = (uint8_t*) device_type;
-                device.type.len = strlen(device_type);
-            }
-        }
-
-        msg.device = &device;
-
-        if (lat_val && PyFloat_Check(lat_val)) {
-            msg.has_lat = 1;
-            msg.lat = PyFloat_AsDouble(lat_val);
-        }
-
-        if (lon_val && PyFloat_Check(lon_val)) {
-            msg.has_lon = 1;
-            msg.lon = PyFloat_AsDouble(lon_val);
-        }
-
-        if (apps_val && PyList_Check(apps_val)) {
-            int i = 0;
-            int n_apps = PySequence_Size(apps_val);
-            msg.n_apps = n_apps;
-            if (n_apps > 0) {
-                msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
-                while (n_apps > 0) {
-                    PyObject *app = PyList_GET_ITEM(apps_val, i);
-                    if (PyInt_Check(app)) {
-                        msg.apps[i] = PyInt_AsLong(app);
-                        i++;
-                    }
-                    n_apps--;
-                }
-            }
-        }
-
-        len = device_apps__get_packed_size(&msg);
-        buf = malloc(len);
-        device_apps__pack(&msg, buf);
-
-        pbheader_t pbheader = PBHEADER_INIT;
-        pbheader.type = DEVICE_APPS_TYPE;
-        pbheader.length = len;
-
-        gzFile fi = gzopen(path, "a6h");
-
-        if (fi == NULL) {
-            PyErr_SetString(PyExc_ValueError, "Cannot open the file");
+        if (! (len = pack_and_write(item, fi))) {
             Py_DECREF(item);
+            gzclose(fi);
             return NULL;
         }
 
-        gzwrite(fi, &pbheader, sizeof(pbheader)); // Write header
-        gzwrite(fi, buf, len); // Write protobuf message
-        gzclose(fi);
-
-        bytes_written += (len + sizeof(pbheader));
-        free(msg.apps);
-        free(buf);
+        bytes_written += len;
 
         Py_DECREF(item);
     }
+
+    gzclose(fi);
 
     Py_DECREF(iterator);
 
