@@ -28,53 +28,92 @@ size_t pack_and_write(PyObject *dict, gzFile fi) {
     PyObject *lon_val    = PyDict_GetItemString(dict, "lon");
     PyObject *apps_val   = PyDict_GetItemString(dict, "apps");
 
-    if (device_val && PyDict_Check(device_val)) {
-        PyObject *id_val = PyDict_GetItemString(device_val, "id");
-        PyObject *type_val = PyDict_GetItemString(device_val, "type");
-        if (id_val && PyString_Check(id_val)) {
-            char *device_id = PyString_AsString(id_val);
-            device.has_id = 1;
-            device.id.data = (uint8_t*) device_id;
-            device.id.len = strlen(device_id);
-        }
-        if (type_val && PyString_Check(type_val)) {
-            char *device_type = PyString_AsString(type_val);
-            device.has_type = 1;
-            device.type.data = (uint8_t*) device_type;
-            device.type.len = strlen(device_type);
+    if (device_val) {
+        if (PyDict_Check(device_val)) {
+            PyObject *id_val = PyDict_GetItemString(device_val, "id");
+            PyObject *type_val = PyDict_GetItemString(device_val, "type");
+            if (id_val) {
+                if (PyString_Check(id_val)) {
+                    char *device_id = PyString_AsString(id_val);
+                    device.has_id = 1;
+                    device.id.data = (uint8_t*) device_id;
+                    device.id.len = strlen(device_id);
+                } else {
+                    PyErr_SetString(PyExc_ValueError, "`id` must be a string type");
+                    return 0;
+                }
+            }
+            if (type_val) {
+                if (PyString_Check(id_val)) {
+                    char *device_type = PyString_AsString(type_val);
+                    device.has_type = 1;
+                    device.type.data = (uint8_t*) device_type;
+                    device.type.len = strlen(device_type);
+                } else {
+                    PyErr_SetString(PyExc_ValueError, "`type` must be a string type");
+                    return 0;
+                }
+            }
+        } else {
+            PyErr_SetString(PyExc_ValueError, "`device` must be a dictionary type");
+            return 0;
         }
     }
 
     msg.device = &device;
 
-    if (lat_val && PyFloat_Check(lat_val)) {
-        msg.has_lat = 1;
-        msg.lat = PyFloat_AsDouble(lat_val);
+    if (lat_val) {
+        if (PyFloat_Check(lat_val)) {
+            msg.has_lat = 1;
+            msg.lat = PyFloat_AsDouble(lat_val);
+        } else if (PyInt_Check(lat_val)) {
+            msg.has_lat = 1;
+            msg.lat = PyInt_AsLong(lat_val);
+        } else {
+            PyErr_SetString(PyExc_ValueError, "`lat` must be a float or an integer type");
+            return 0;
+        }
     }
 
-    if (lon_val && PyFloat_Check(lon_val)) {
-        msg.has_lon = 1;
-        msg.lon = PyFloat_AsDouble(lon_val);
+    if (lon_val) {
+        if (PyFloat_Check(lon_val)) {
+            msg.has_lon = 1;
+            msg.lon = PyFloat_AsDouble(lon_val);
+        } else if (PyInt_Check(lon_val)) {
+            msg.has_lon = 1;
+            msg.lon = PyInt_AsLong(lon_val);
+        } else {
+            PyErr_SetString(PyExc_ValueError, "`lon` must be a float or an int type");
+            return 0;
+        }
     }
 
-    if (apps_val && PyList_Check(apps_val)) {
-        int i = 0;
-        int n_apps = PySequence_Size(apps_val);
-        msg.n_apps = n_apps;
-        if (n_apps > 0) {
-            msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
-            if (! msg.apps) {
-                PyErr_SetString(PyExc_ValueError, "Cannot allocate memory block");
-                return 0;
-            }
-            while (n_apps > 0) {
-                PyObject *app = PyList_GET_ITEM(apps_val, i);
-                if (PyInt_Check(app)) {
-                    msg.apps[i] = PyInt_AsLong(app);
-                    i++;
+    if (apps_val) {
+        if (PyList_Check(apps_val)) {
+            int i = 0;
+            int n_apps = PySequence_Size(apps_val);
+            msg.n_apps = n_apps;
+            if (n_apps > 0) {
+                msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
+                if (! msg.apps) {
+                    PyErr_SetString(PyExc_ValueError, "Cannot allocate the memory block");
+                    return 0;
                 }
-                n_apps--;
+                while (n_apps > 0) {
+                    PyObject *app = PyList_GET_ITEM(apps_val, i);
+                    if (PyInt_Check(app)) {
+                        msg.apps[i] = PyInt_AsLong(app);
+                        i++;
+                    } else {
+                        PyErr_SetString(PyExc_ValueError, "`app` must be an integer type");
+                        return 0;
+                    }
+                    n_apps--;
+                }
             }
+        } else {
+            PyErr_SetString(PyExc_ValueError, "`apps` must be a list type");
+            return 0;
         }
     }
 
@@ -82,7 +121,7 @@ size_t pack_and_write(PyObject *dict, gzFile fi) {
 
     buf = malloc(len);
     if (! buf) {
-        PyErr_SetString(PyExc_ValueError, "Cannot allocate memory block");
+        PyErr_SetString(PyExc_ValueError, "Cannot allocate the memory block");
         return 0;
     }
 
@@ -118,7 +157,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
     PyObject *item;
 
     if (! iterator) {
-        PyErr_SetString(PyExc_ValueError, "First argument should be iterable");
+        PyErr_SetString(PyExc_ValueError, "First argument must be iterable");
         return NULL;
     }
 
@@ -135,7 +174,7 @@ static PyObject* py_deviceapps_xwrite_pb(PyObject* self, PyObject* args) {
         }
 
         if (! PyDict_Check(item)) {
-            PyErr_SetString(PyExc_ValueError, "The deviceapps type must be a dictionary");
+            PyErr_SetString(PyExc_ValueError, "`deviceapps` must be a dictionary type");
             gzclose(fi);
             return NULL;
         }

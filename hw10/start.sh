@@ -7,6 +7,7 @@ yum install -y  gcc \
 				protobuf-c \
 				protobuf-c-compiler \
 				protobuf-c-devel \
+				protobuf-python \
 				python-devel \
 				python-setuptools \
 				gdb \
@@ -15,4 +16,5 @@ yum install -y  gcc \
 ulimit -c unlimited
 cd /tmp/otus/
 protoc-c --c_out=. deviceapps.proto
+protoc --python_out=. deviceapps.proto
 python setup.py test

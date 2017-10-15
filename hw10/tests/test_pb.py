@@ -1,9 +1,11 @@
-import gzip
 import os
 import unittest
+import gzip
 from struct import unpack
 
 import pb
+import deviceapps_pb2 as dapps_pb2
+
 MAGIC = 0xFFFFFFFF
 DEVICE_APPS_TYPE = 1
 TEST_FILE = "test.pb.gz"
@@ -23,31 +25,28 @@ class TestPB(unittest.TestCase):
 
     def test_write(self):
         header_size = 8
-        message_counter = 0
         bytes_written = pb.deviceapps_xwrite_pb(self.deviceapps, TEST_FILE)
         self.assertTrue(bytes_written > 0)
         with gzip.open(TEST_FILE, 'r') as fi:
-            header_bites = []
-            message_length = 0
-            messages_bytes = 0
-            for bytes in fi.readlines():
-                for byte in bytes:
-                    if message_length > 1:
-                        messages_bytes += 1
-                        message_length -= 1
-                    else:
-                        if len(header_bites) != header_size:
-                            header_bites.append(byte)
-                        else:
-                            magic, device_type, message_length = unpack('Ihh', ''.join(header_bites))
-                            header_bites = []
-                            if magic == MAGIC:
-                                messages_bytes += 1
-                                message_counter += 1
-                            self.assertEqual(magic, MAGIC)
-                            self.assertEqual(device_type, DEVICE_APPS_TYPE)
-            self.assertEqual(message_counter, len(self.deviceapps))
-            self.assertEqual(bytes_written - header_size * message_counter, messages_bytes)
+            for deviceapp in self.deviceapps:
+                magic, device_type, message_length = unpack('<Ihh', fi.read(header_size))
+                self.assertEqual(magic, MAGIC)
+                self.assertEqual(device_type, DEVICE_APPS_TYPE)
+                message = fi.read(message_length)
+
+                da = dapps_pb2.DeviceApps()
+                da.ParseFromString(message)
+
+                da_orig = dapps_pb2.DeviceApps()
+                da_orig.device.id = deviceapp['device']['id']
+                da_orig.device.type = deviceapp['device']['type']
+                da_orig.apps.extend(deviceapp['apps'])
+                if 'lat' in deviceapp:
+                    da_orig.lat = deviceapp['lat']
+                if 'lon' in deviceapp:
+                    da_orig.lon = deviceapp['lon']
+
+                self.assertEqual(da, da_orig)
 
     @unittest.skip("Optional problem")
     def test_read(self):

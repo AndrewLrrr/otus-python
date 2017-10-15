@@ -1,4 +1,5 @@
 deviceapps.pb-c.*
+deviceapps_pb2.py
 *.so
 pb.egg-info
 build
