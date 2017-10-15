@@ -42,9 +42,9 @@ sys   3m30.204s
 ```
 ### N-workers multi-threaded handler execution time:
 ```
-> time python memc_load.py --pattern=*.tsv.gz --workers=2 --threads=4
+> time python memc_load.py --pattern=*.tsv.gz --workers=2
 
-real  2m50.913s
-user  3m4.364s
-sys   1m43.352s
+real  2m29.816s
+user  2m36.356s
+sys   1m29.132s
 ```

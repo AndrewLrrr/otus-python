@@ -116,51 +116,40 @@ def parse_appsinstalled(line):
     return AppsInstalled(dev_type, dev_id, lat, lon, apps)
 
 
-def insert_appsinstalled(queue, stats_queue, conn_pools):
-    processed = errors = 0
+def lines_chunk_handler(chunk, conn_pools):
+    errors = 0
 
-    while True:
-        try:
-            chunk = queue.get(timeout=0.1)
-            buf_chunk = collections.defaultdict(list)
+    packed_chunks = collections.defaultdict(list)
 
-            if chunk == SENTINEL:
-                stats_queue.put((processed, errors))
-                queue.task_done()
-                break
+    for line in chunk:
+        line = line.strip()
 
-            for line in chunk:
-                line = line.strip()
-
-                if not line:
-                    continue
-
-                appsinstalled = parse_appsinstalled(line)
-
-                if not appsinstalled:
-                    errors += 1
-                    continue
-
-                key, ua = buf_appsinstalled(appsinstalled)
-
-                buf_chunk[appsinstalled.dev_type].append((key, ua))
-
-            for k, v in buf_chunk.items():
-                conn_queue = conn_pools.get(k)
-                if not conn_queue:
-                    errors += 1
-                    logging.error('Unknow device type: %s', k)
-                    continue
-                conn_queue.put(v)
-            queue.task_done()
-        except Queue.Empty:
+        if not line:
             continue
 
+        appsinstalled = parse_appsinstalled(line)
 
-def handle_log((fn, device_memc, threads_cnt, dry_run)):
-    queue = Queue.Queue(maxsize=threads_cnt)
+        if not appsinstalled:
+            errors += 1
+            continue
+
+        key, ua = buf_appsinstalled(appsinstalled)
+
+        packed_chunks[appsinstalled.dev_type].append((key, ua))
+
+    for k, v in packed_chunks.items():
+        conn_queue = conn_pools.get(k)
+        if not conn_queue:
+            errors += 1
+            logging.error('Unknow device type: %s', k)
+            continue
+        conn_queue.put(v)
+
+    return errors
+
+
+def handle_log((fn, device_memc, dry_run)):
     stats_queue = Queue.Queue()
-    workers = []
     connections = []
     conn_pools = collections.defaultdict(Queue.Queue)
 
@@ -172,40 +161,20 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
     for memcached_thread in connections:
         memcached_thread.start()
 
-    # Start lines handle threads
-    for i in range(threads_cnt):
-        thread = threading.Thread(target=insert_appsinstalled, args=(queue, stats_queue, conn_pools))
-        thread.daemon = True
-        workers.append(thread)
-
-    for thread in workers:
-        thread.start()
-
     logging.info('%s | Processing %s', multiprocessing.current_process().name, fn)
 
-    read = 0
-    fd = gzip.open(fn)
-    chunk = list(islice(fd, CHUNK_SIZE))
-    while all(w.is_alive() for w in workers):
-        if not chunk:
-            break
-        try:
-            queue.put(chunk)
-        except Queue.Full:
-            continue
-        read += len(chunk)
+    processed = read = errors = 0
+    with gzip.open(fn) as fd:
         chunk = list(islice(fd, CHUNK_SIZE))
-    fd.close()
+        while all(c.is_alive() for c in connections):
+            if not chunk:
+                break
+            errors += lines_chunk_handler(chunk, conn_pools)
+            read += len(chunk)
+            chunk = list(islice(fd, CHUNK_SIZE))
 
     logging.info('%s | File: %s | Total records readed: %s', multiprocessing.current_process().name, fn,
                  read)
-
-    # Finish lines handle threads
-    for _ in workers:
-        queue.put(SENTINEL)
-
-    for thread in workers:
-        thread.join()
 
     # Finish memcached connection handle threads
     for k, addr in device_memc.items():
@@ -214,7 +183,6 @@ def handle_log((fn, device_memc, threads_cnt, dry_run)):
     for memcached_thread in connections:
         memcached_thread.join()
 
-    processed = errors = 0
     while not stats_queue.empty():
         worker_processed, worker_errors = stats_queue.get(timeout=0.1)
         processed += worker_processed
@@ -248,7 +216,7 @@ def main(options):
     fargs = []
 
     for fn in glob.iglob(options.pattern):
-        fargs.append((fn, device_memc, int(options.threads), options.dry))
+        fargs.append((fn, device_memc, options.dry))
 
     fargs.sort(key=lambda x: x[0])
 
@@ -283,7 +251,6 @@ if __name__ == '__main__':
     op.add_option('--gaid', action='store', default='127.0.0.1:33014')
     op.add_option('--adid', action='store', default='127.0.0.1:33015')
     op.add_option('--dvid', action='store', default='127.0.0.1:33016')
-    op.add_option('--threads', action='store', default=4)
     op.add_option('--workers', action='store', default=2)
     (opts, args) = op.parse_args()
     logging.basicConfig(filename=opts.log, level=logging.INFO if not opts.dry else logging.DEBUG,
