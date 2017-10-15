@@ -83,7 +83,7 @@ size_t pack_and_write(PyObject *dict, gzFile fi) {
             msg.has_lon = 1;
             msg.lon = PyInt_AsLong(lon_val);
         } else {
-            PyErr_SetString(PyExc_ValueError, "`lon` must be a float or an int type");
+            PyErr_SetString(PyExc_ValueError, "`lon` must be a float or an integer type");
             return 0;
         }
     }
@@ -96,7 +96,7 @@ size_t pack_and_write(PyObject *dict, gzFile fi) {
             if (n_apps > 0) {
                 msg.apps = malloc(sizeof(uint32_t) * msg.n_apps);
                 if (! msg.apps) {
-                    PyErr_SetString(PyExc_ValueError, "Cannot allocate the memory block");
+                    PyErr_SetString(PyExc_ValueError, "Cannot allocate memory");
                     return 0;
                 }
                 while (n_apps > 0) {
@@ -121,7 +121,7 @@ size_t pack_and_write(PyObject *dict, gzFile fi) {
 
     buf = malloc(len);
     if (! buf) {
-        PyErr_SetString(PyExc_ValueError, "Cannot allocate the memory block");
+        PyErr_SetString(PyExc_ValueError, "Cannot allocate memory");
         return 0;
     }
 
