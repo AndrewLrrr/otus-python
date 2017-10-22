@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/AndrewLrrr/memclog/appsinstalled"
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/golang/protobuf/proto"
 	"log"
 	"os"
@@ -17,54 +18,6 @@ type LogLine struct {
 	devType, devId string
 	lat, lon       float64
 	apps           []uint32
-}
-
-func dotRename(path string) error {
-	newPath := "." + path
-	return os.Rename(path, newPath)
-}
-
-func bufLine(logLine LogLine) (string, []byte, error) {
-	packed := appsinstalled.UserApps{
-		Apps: logLine.apps,
-		Lat:  &logLine.lat,
-		Lon:  &logLine.lon,
-	}
-	key := fmt.Sprintf("%s:%s", logLine.devType, logLine.devId)
-
-	data, err := proto.Marshal(&packed)
-	if err != nil {
-		return "", data, errors.New(fmt.Sprintf("marshaling error: %s", err))
-	}
-
-	return key, data, nil
-}
-
-func HandleLog(filename string) {
-	file, err := os.Open(filename)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	gz, err := gzip.NewReader(file)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer file.Close()
-	defer gz.Close()
-
-	scanner := bufio.NewScanner(gz)
-
-	for scanner.Scan() {
-		log.Println(scanner.Text())
-	}
-
-	if err = scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
 }
 
 func (logLine *LogLine) parse(line string) error {
@@ -112,6 +65,88 @@ func (logLine *LogLine) parse(line string) error {
 	return nil
 }
 
+type Memcache struct {
+	connection *memcache.Client
+}
+
+func (mc *Memcache) setItem(key string, value []byte) error {
+	return mc.connection.Set(&memcache.Item{Key: key, Value: value})
+}
+
+func dotRename(path string) error {
+	newPath := "." + path
+	return os.Rename(path, newPath)
+}
+
+func setConnection(addr string) *Memcache {
+	mc := Memcache{}
+	mc.connection = memcache.New(addr)
+	return &mc
+}
+
+func bufLine(logLine LogLine) (string, []byte, error) {
+	packed := appsinstalled.UserApps{
+		Apps: logLine.apps,
+		Lat:  &logLine.lat,
+		Lon:  &logLine.lon,
+	}
+	key := fmt.Sprintf("%s:%s", logLine.devType, logLine.devId)
+
+	data, err := proto.Marshal(&packed)
+	if err != nil {
+		return "", data, errors.New(fmt.Sprintf("marshaling error: %s", err))
+	}
+
+	return key, data, nil
+}
+
 func main() {
-	HandleLog("20170929000000.tsv.gz")
+	filename := "20170929000000.tsv.gz"
+
+	connections := map[string]*Memcache{
+		"idfa": setConnection("127.0.0.1:33013"),
+		"gaid": setConnection("127.0.0.1:33014"),
+		"adid": setConnection("127.0.0.1:33015"),
+		"dvid": setConnection("127.0.0.1:33016"),
+	}
+
+	file, err := os.Open(filename)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gz, err := gzip.NewReader(file)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer file.Close()
+	defer gz.Close()
+
+	scanner := bufio.NewScanner(gz)
+
+	for scanner.Scan() {
+		logLine := LogLine{}
+		err := logLine.parse(scanner.Text())
+		if err != nil {
+			log.Println(err)
+		}
+
+		key, parsed, err := bufLine(logLine)
+		if err != nil {
+			log.Println(err)
+		} else {
+			connection := connections[logLine.devType]
+			err := connection.setItem(key, parsed)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}
+
+	if err = scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
 }
