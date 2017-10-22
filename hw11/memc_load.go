@@ -9,6 +9,8 @@ import (
 	"strings"
 	"log"
 	"fmt"
+	"bufio"
+	"compress/gzip"
 )
 
 type LogLine struct {
@@ -36,6 +38,33 @@ func bufLine(logLine LogLine) (string, []byte, error) {
 	}
 
 	return key, data, nil
+}
+
+func HandleLog(filename string) {
+	file, err := os.Open(filename)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gz, err := gzip.NewReader(file)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer file.Close()
+	defer gz.Close()
+
+	scanner := bufio.NewScanner(gz)
+
+	for scanner.Scan() {
+		log.Println(scanner.Text())
+	}
+
+	if err = scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func (logLine *LogLine) parse(line string) error {
@@ -84,4 +113,5 @@ func (logLine *LogLine) parse(line string) error {
 }
 
 func main() {
+	HandleLog("20170929000000.tsv.gz")
 }
