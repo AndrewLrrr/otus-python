@@ -1,11 +1,11 @@
 package main
 
 import (
-	"github.com/golang/protobuf/proto"
-	"github.com/AndrewLrrr/memclog/appsinstalled"
 	"bufio"
-	"strings"
+	"github.com/AndrewLrrr/memclog/appsinstalled"
+	"github.com/golang/protobuf/proto"
 	"log"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +31,7 @@ func TestBufLine(t *testing.T) {
 				t.Error("unmarshaling error: ", err)
 			}
 
-			if key != logLine.devType + ":" + logLine.devId {
+			if key != logLine.devType+":"+logLine.devId {
 				t.Error("Incorrect key")
 			}
 

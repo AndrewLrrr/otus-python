@@ -1,16 +1,16 @@
 package main
 
 import (
-	"github.com/golang/protobuf/proto"
-	"github.com/AndrewLrrr/memclog/appsinstalled"
+	"bufio"
+	"compress/gzip"
 	"errors"
+	"fmt"
+	"github.com/AndrewLrrr/memclog/appsinstalled"
+	"github.com/golang/protobuf/proto"
+	"log"
 	"os"
 	"strconv"
 	"strings"
-	"log"
-	"fmt"
-	"bufio"
-	"compress/gzip"
 )
 
 type LogLine struct {
