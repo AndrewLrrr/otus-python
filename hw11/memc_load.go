@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"runtime"
 )
 
 type LogLine struct {
@@ -100,6 +101,20 @@ func bufLine(logLine LogLine) (string, []byte, error) {
 	return key, data, nil
 }
 
+func worker(mc *Memcache, queue <-chan LogLine) {
+	for {
+		key, packed, err := bufLine(<-queue)
+		if err != nil {
+			log.Println(err)
+		} else {
+			err := mc.setItem(key, packed)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}
+}
+
 func main() {
 	filename := "20170929000000.tsv.gz"
 
@@ -110,14 +125,22 @@ func main() {
 		"dvid": setConnection("127.0.0.1:33016"),
 	}
 
-	file, err := os.Open(filename)
+	channels := make(map[string](chan LogLine))
 
+	for key, connection := range connections {
+		channels[key] = make(chan LogLine)
+		go worker(connection, channels[key])
+	}
+
+	num := runtime.NumCPU()
+	runtime.GOMAXPROCS(num)
+
+	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	gz, err := gzip.NewReader(file)
-
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -129,20 +152,10 @@ func main() {
 
 	for scanner.Scan() {
 		logLine := LogLine{}
-		err := logLine.parse(scanner.Text())
-		if err != nil {
-			log.Println(err)
-		}
-
-		key, parsed, err := bufLine(logLine)
-		if err != nil {
+		if err := logLine.parse(scanner.Text()); err != nil {
 			log.Println(err)
 		} else {
-			connection := connections[logLine.devType]
-			err := connection.setItem(key, parsed)
-			if err != nil {
-				log.Println(err)
-			}
+			channels[logLine.devType] <-logLine
 		}
 	}
 
