@@ -22,6 +22,7 @@ import (
 
 const (
 	LineWorkers     = 100
+	ChannelsBuffer  = 100
 	LogsDir         = "./logs"
 	MemcacheTimeout = 500 * time.Millisecond
 )
@@ -87,32 +88,32 @@ func parseLine(line string) (LogLine, error) {
 	logLine := LogLine{}
 
 	if len(lineParts) != 5 {
-		return logLine, errors.New("incorrect log line\n")
+		return logLine, errors.New("incorrect log line")
 	}
 
 	logLine.devType = strings.TrimSpace(lineParts[0])
 	logLine.devId = strings.TrimSpace(lineParts[1])
 
 	if len(logLine.devId) == 0 {
-		return logLine, errors.New("empty dev_id is not allowed\n")
+		return logLine, errors.New("empty dev_id is not allowed")
 	}
 
 	if len(logLine.devType) == 0 {
-		return logLine, errors.New("empty dev_type is not allowed\n")
+		return logLine, errors.New("empty dev_type is not allowed")
 	}
 
 	if lat, err := strconv.ParseFloat(lineParts[2], 64); err == nil {
 		logLine.lat = lat
 	} else {
 		logLine.lat = 0
-		log.Printf("invalid latitude: `%s`\n", line)
+		log.Printf("invalid latitude: `%s`", line)
 	}
 
 	if lon, err := strconv.ParseFloat(lineParts[3], 64); err == nil {
 		logLine.lon = lon
 	} else {
 		logLine.lon = 0
-		log.Printf("invalid longitude: `%s`\n", line)
+		log.Printf("invalid longitude: `%s`", line)
 	}
 
 	apps := strings.Split(strings.TrimSpace(lineParts[4]), ",")
@@ -121,7 +122,7 @@ func parseLine(line string) (LogLine, error) {
 		if num, err := strconv.ParseUint(app, 10, 32); err == nil {
 			logLine.apps = append(logLine.apps, uint32(num))
 		} else {
-			log.Printf("not all user apps are digits: `%s`\n", line)
+			log.Printf("not all user apps are digits: `%s`", line)
 		}
 	}
 
@@ -220,7 +221,7 @@ func main() {
 	statistic := make(chan *Statistic)
 
 	for key, addr := range connections {
-		channels[key] = make(chan *MemcacheTask, LineWorkers)
+		channels[key] = make(chan *MemcacheTask, ChannelsBuffer)
 		go memcacheWorker(setConnection(addr), channels[key], statistic)
 	}
 
@@ -233,7 +234,7 @@ func main() {
 		}
 	}
 
-	lines := make(chan string, LineWorkers)
+	lines := make(chan string, ChannelsBuffer)
 
 	for i := 0; i < LineWorkers; i++ {
 		go lineWorker(channels, lines, statistic)
