@@ -25,6 +25,7 @@ const (
 	ChannelsBuffer  = 100
 	LogsDir         = "./logs"
 	MemcacheTimeout = 500 * time.Millisecond
+	NormalErrRate   = 0.01
 )
 
 type LogLine struct {
@@ -210,21 +211,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	connections := map[string]string{
-		"idfa": "127.0.0.1:33013",
-		"gaid": "127.0.0.1:33014",
-		"adid": "127.0.0.1:33015",
-		"dvid": "127.0.0.1:33016",
+	connections := map[string]*Memcache{
+		"idfa": setConnection("127.0.0.1:33013"),
+		"gaid": setConnection("127.0.0.1:33014"),
+		"adid": setConnection("127.0.0.1:33015"),
+		"dvid": setConnection("127.0.0.1:33016"),
 	}
 
-	channels := make(map[string](chan *MemcacheTask))
 	statistic := make(chan *Statistic)
-
-	for key, addr := range connections {
-		channels[key] = make(chan *MemcacheTask, ChannelsBuffer)
-		go memcacheWorker(setConnection(addr), channels[key], statistic)
-	}
-
 	filePaths := []string{}
 
 	for _, file := range files {
@@ -234,17 +228,27 @@ func main() {
 		}
 	}
 
-	lines := make(chan string, ChannelsBuffer)
-
-	for i := 0; i < LineWorkers; i++ {
-		go lineWorker(channels, lines, statistic)
-	}
-
 	sort.Strings(filePaths)
 
-	read := 0
+	totalRead := 0
+	totalProcessed := 0
+	totalErrors := 0
 	for _, filePath := range filePaths {
 		log.Printf("start handle file %s", filePath)
+
+		channels := make(map[string](chan *MemcacheTask))
+		for key, connection := range connections {
+			channels[key] = make(chan *MemcacheTask, ChannelsBuffer)
+			go memcacheWorker(connection, channels[key], statistic)
+		}
+
+		read := 0
+		lines := make(chan string, ChannelsBuffer)
+
+		for i := 0; i < LineWorkers; i++ {
+			go lineWorker(channels, lines, statistic)
+		}
+
 		file, err := os.Open(filePath)
 		if err != nil {
 			log.Fatal(err)
@@ -271,26 +275,43 @@ func main() {
 
 		dotRename(filePath)
 		log.Printf("finish handle file %s", filePath)
+
+		close(lines)
+
+		processSuccess := 0
+		processErrors := 0
+		for j := 0; j < LineWorkers; j++ {
+			stat := <-statistic
+			processSuccess += stat.processed
+			processErrors += stat.errors
+		}
+
+		for _, channel := range channels {
+			close(channel)
+			stat := <-statistic
+			processSuccess += stat.processed
+			processErrors += stat.errors
+		}
+
+		totalRead += read
+		totalProcessed += processSuccess
+		totalErrors += processErrors
+		log.Printf("read lines: %d", read)
+		log.Printf("processed lines: %d", processSuccess)
+		log.Printf("error lines: %d", processErrors)
+
+		if processSuccess > 0 {
+			errRate := float64(processErrors / processSuccess)
+			if errRate < NormalErrRate {
+				log.Printf("file: %s | Acceptable error rate (%d). Successfull load", filePath, processErrors)
+			} else {
+				log.Printf("file: %s | High error rate (%d > %d). Failed load", filePath, processErrors, NormalErrRate)
+			}
+		}
+		log.Println("----------------------------------------------")
 	}
 
-	close(lines)
-
-	processSuccess := 0
-	processErrors := 0
-	for j := 0; j < LineWorkers; j++ {
-		stat := <-statistic
-		processSuccess += stat.processed
-		processErrors += stat.errors
-	}
-
-	for _, channel := range channels {
-		close(channel)
-		stat := <-statistic
-		processSuccess += stat.processed
-		processErrors += stat.errors
-	}
-
-	log.Printf("total read lines: %d", read)
-	log.Printf("total processed lines: %d", processSuccess)
-	log.Printf("total error lines: %d", processErrors)
+	log.Printf("total read lines: %d", totalRead)
+	log.Printf("total processed lines: %d", totalProcessed)
+	log.Printf("total error lines: %d", totalErrors)
 }
