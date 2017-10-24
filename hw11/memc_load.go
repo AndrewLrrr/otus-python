@@ -14,8 +14,15 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
+)
+
+const (
+	LogsDir = "./logs"
+	MemcacheTimeout = 200 * time.Millisecond
 )
 
 type LogLine struct {
@@ -32,12 +39,12 @@ func (mc *Memcache) setItem(key string, value []byte) error {
 	return mc.connection.Set(&memcache.Item{Key: key, Value: value})
 }
 
-func dotRename(dir string, file os.FileInfo) error {
-	if name := file.Name(); !strings.HasPrefix(name, ".") {
+func dotRename(path string) error {
+	if name := filepath.Base(path); !strings.HasPrefix(name, ".") {
 		newName := "." + name
-		oldPath := filepath.Join(dir, name)
+		dir := filepath.Dir(path)
 		newPath := filepath.Join(dir, newName)
-		return os.Rename(oldPath, newPath)
+		return os.Rename(path, newPath)
 	}
 	return nil
 }
@@ -45,6 +52,7 @@ func dotRename(dir string, file os.FileInfo) error {
 func setConnection(addr string) *Memcache {
 	mc := Memcache{}
 	mc.connection = memcache.New(addr)
+	mc.connection.Timeout = MemcacheTimeout
 	return &mc
 }
 
@@ -110,33 +118,37 @@ func bufLine(logLine LogLine) (string, []byte, error) {
 	return key, data, nil
 }
 
-func handleLogFile(filename string, channels map[string](chan LogLine)) {
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	gz, err := gzip.NewReader(file)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer file.Close()
-	defer gz.Close()
-
-	scanner := bufio.NewScanner(gz)
-
-	for scanner.Scan() {
-		logLine, err := parseLine(scanner.Text())
+func logFileWorker(channels map[string](chan LogLine), jobs chan string, results chan string) {
+	for filePath := range jobs {
+		file, err := os.Open(filePath)
 		if err != nil {
-			log.Println(err)
-		} else {
-			channels[logLine.devType] <- logLine
+			log.Fatal(err)
 		}
-	}
 
-	if err = scanner.Err(); err != nil {
-		log.Fatal(err)
+		gz, err := gzip.NewReader(file)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		defer file.Close()
+		defer gz.Close()
+
+		scanner := bufio.NewScanner(gz)
+
+		for scanner.Scan() {
+			logLine, err := parseLine(scanner.Text())
+			if err != nil {
+				log.Println(err)
+			} else {
+				channels[logLine.devType] <- logLine
+			}
+		}
+
+		if err = scanner.Err(); err != nil {
+			log.Fatal(err)
+		} else {
+			results <- filePath
+		}
 	}
 }
 
@@ -158,9 +170,7 @@ func main() {
 	num := runtime.NumCPU()
 	runtime.GOMAXPROCS(num)
 
-	logsDir := "./logs"
-
-	files, err := ioutil.ReadDir(logsDir)
+	files, err := ioutil.ReadDir(LogsDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -179,14 +189,30 @@ func main() {
 		go memcacheWorker(setConnection(addr), channels[key])
 	}
 
+	jobFiles := make(chan string)
+	resultFiles := make(chan string)
+	filePaths := []string{}
+
 	for _, file := range files {
-		r, err := regexp.MatchString("^.*.tsv.gz$", file.Name())
+		r, err := regexp.MatchString("^[^\\.]+\\.tsv\\.gz$", file.Name())
 		if err == nil && r {
-			filePath := filepath.Join(logsDir, file.Name())
-			log.Printf("Start handle file %s\n", filePath)
-			handleLogFile(filePath, channels)
-			dotRename(logsDir, file)
-			log.Printf("Finish handle file %s\n", filePath)
+			filePath := filepath.Join(LogsDir, file.Name())
+			filePaths = append(filePaths, filePath)
+			go logFileWorker(channels, jobFiles, resultFiles)
 		}
+	}
+
+	sort.Strings(filePaths)
+
+	for _, filePath := range filePaths {
+		log.Printf("Start handle file %s\n", filePath)
+		jobFiles <- filePath
+	}
+	close(jobFiles)
+
+	for j := 0; j < len(filePaths); j++ {
+		processedFile := <-resultFiles
+		dotRename(processedFile)
+		log.Printf("Finish handle file %s\n", processedFile)
 	}
 }
