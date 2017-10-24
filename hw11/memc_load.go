@@ -21,8 +21,9 @@ import (
 )
 
 const (
+	LineWorkers     = 100
 	LogsDir         = "./logs"
-	MemcacheTimeout = 200 * time.Millisecond
+	MemcacheTimeout = 500 * time.Millisecond
 )
 
 type LogLine struct {
@@ -32,7 +33,7 @@ type LogLine struct {
 }
 
 type MemcacheTask struct {
-	key string
+	key   string
 	value []byte
 }
 
@@ -41,7 +42,22 @@ type Memcache struct {
 }
 
 func (mc *Memcache) setItem(key string, value []byte) error {
-	return mc.connection.Set(&memcache.Item{Key: key, Value: value})
+	tries := 3
+	delay := 100
+	backoff := 2
+	if err := mc.connection.Set(&memcache.Item{Key: key, Value: value}); err != nil {
+		for {
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+			if err != nil && tries > 0 {
+				err = mc.connection.Set(&memcache.Item{Key: key, Value: value})
+				tries--
+				delay *= backoff
+			} else {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func dotRename(path string) error {
@@ -138,7 +154,7 @@ func lineWorker(channels map[string](chan *MemcacheTask), queue <-chan string) {
 				log.Println(err)
 			} else {
 				task := &MemcacheTask{
-					key: key,
+					key:   key,
 					value: packed,
 				}
 				channels[logLine.devType] <- task
@@ -179,10 +195,13 @@ func main() {
 	channels := make(map[string](chan *MemcacheTask))
 
 	for key, addr := range connections {
-		channels[key] = make(chan *MemcacheTask)
+		channels[key] = make(chan *MemcacheTask, LineWorkers)
 		go memcacheWorker(setConnection(addr), channels[key])
-		defer close(channels[key])
 	}
+	defer close(channels["idfa"])
+	defer close(channels["gaid"])
+	defer close(channels["adid"])
+	defer close(channels["dvid"])
 
 	filePaths := []string{}
 
@@ -193,9 +212,9 @@ func main() {
 		}
 	}
 
-	lines := make(chan string)
+	lines := make(chan string, LineWorkers)
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < LineWorkers; i++ {
 		go lineWorker(channels, lines)
 	}
 
