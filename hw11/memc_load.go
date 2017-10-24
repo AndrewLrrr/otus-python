@@ -37,6 +37,11 @@ type MemcacheTask struct {
 	value []byte
 }
 
+type Statistic struct {
+	processed int
+	errors    int
+}
+
 type Memcache struct {
 	connection *memcache.Client
 }
@@ -139,18 +144,26 @@ func bufLine(logLine LogLine) (string, []byte, error) {
 	return key, data, nil
 }
 
-func lineWorker(channels map[string](chan *MemcacheTask), queue <-chan string) {
+func lineWorker(channels map[string](chan *MemcacheTask), queue <-chan string, stats chan *Statistic) {
+	processErrors := 0
 	for {
 		line, ok := <-queue
 		if !ok {
+			stat := &Statistic{
+				processed: 0,
+				errors:    processErrors,
+			}
+			stats <- stat
 			return
 		}
 		logLine, err := parseLine(line)
 		if err != nil {
+			processErrors++
 			log.Println(err)
 		} else {
 			key, packed, err := bufLine(logLine)
 			if err != nil {
+				processErrors++
 				log.Println(err)
 			} else {
 				task := &MemcacheTask{
@@ -163,15 +176,26 @@ func lineWorker(channels map[string](chan *MemcacheTask), queue <-chan string) {
 	}
 }
 
-func memcacheWorker(mc *Memcache, queue <-chan *MemcacheTask) {
+func memcacheWorker(mc *Memcache, queue <-chan *MemcacheTask, stats chan *Statistic) {
+	processSuccess := 0
+	processErrors := 0
 	for {
 		task, ok := <-queue
 		if !ok {
+			stat := &Statistic{
+				processed: processSuccess,
+				errors:    processErrors,
+			}
+			stats <- stat
+			log.Printf("memcache processed %d | errors %d", processSuccess, processErrors)
 			return
 		}
 		err := mc.setItem(task.key, task.value)
 		if err != nil {
+			processErrors++
 			log.Println(err)
+		} else {
+			processSuccess++
 		}
 	}
 }
@@ -193,15 +217,12 @@ func main() {
 	}
 
 	channels := make(map[string](chan *MemcacheTask))
+	statistic := make(chan *Statistic)
 
 	for key, addr := range connections {
 		channels[key] = make(chan *MemcacheTask, LineWorkers)
-		go memcacheWorker(setConnection(addr), channels[key])
+		go memcacheWorker(setConnection(addr), channels[key], statistic)
 	}
-	defer close(channels["idfa"])
-	defer close(channels["gaid"])
-	defer close(channels["adid"])
-	defer close(channels["dvid"])
 
 	filePaths := []string{}
 
@@ -215,14 +236,14 @@ func main() {
 	lines := make(chan string, LineWorkers)
 
 	for i := 0; i < LineWorkers; i++ {
-		go lineWorker(channels, lines)
+		go lineWorker(channels, lines, statistic)
 	}
 
 	sort.Strings(filePaths)
-	defer close(lines)
 
+	read := 0
 	for _, filePath := range filePaths {
-		log.Printf("Start handle file %s\n", filePath)
+		log.Printf("start handle file %s", filePath)
 		file, err := os.Open(filePath)
 		if err != nil {
 			log.Fatal(err)
@@ -237,6 +258,7 @@ func main() {
 
 		for scanner.Scan() {
 			lines <- scanner.Text()
+			read++
 		}
 
 		if err := scanner.Err(); err != nil {
@@ -247,6 +269,27 @@ func main() {
 		file.Close()
 
 		dotRename(filePath)
-		log.Printf("Finish handle file %s\n", filePath)
+		log.Printf("finish handle file %s", filePath)
 	}
+
+	close(lines)
+
+	processSuccess := 0
+	processErrors := 0
+	for j := 0; j < LineWorkers; j++ {
+		stat := <-statistic
+		processSuccess += stat.processed
+		processErrors += stat.errors
+	}
+
+	for _, channel := range channels {
+		close(channel)
+		stat := <-statistic
+		processSuccess += stat.processed
+		processErrors += stat.errors
+	}
+
+	log.Printf("total read lines: %d", read)
+	log.Printf("total processed lines: %d", processSuccess)
+	log.Printf("total error lines: %d", processErrors)
 }
