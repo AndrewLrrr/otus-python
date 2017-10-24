@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	LogsDir = "./logs"
+	LogsDir         = "./logs"
 	MemcacheTimeout = 200 * time.Millisecond
 )
 
@@ -29,6 +29,11 @@ type LogLine struct {
 	devType, devId string
 	lat, lon       float64
 	apps           []uint32
+}
+
+type MemcacheTask struct {
+	key string
+	value []byte
 }
 
 type Memcache struct {
@@ -118,50 +123,39 @@ func bufLine(logLine LogLine) (string, []byte, error) {
 	return key, data, nil
 }
 
-func logFileWorker(channels map[string](chan LogLine), jobs chan string, results chan string) {
-	for filePath := range jobs {
-		file, err := os.Open(filePath)
-		if err != nil {
-			log.Fatal(err)
+func lineWorker(channels map[string](chan *MemcacheTask), queue <-chan string) {
+	for {
+		line, ok := <-queue
+		if !ok {
+			return
 		}
-
-		gz, err := gzip.NewReader(file)
+		logLine, err := parseLine(line)
 		if err != nil {
-			log.Fatal(err)
-		}
-
-		defer file.Close()
-		defer gz.Close()
-
-		scanner := bufio.NewScanner(gz)
-
-		for scanner.Scan() {
-			logLine, err := parseLine(scanner.Text())
+			log.Println(err)
+		} else {
+			key, packed, err := bufLine(logLine)
 			if err != nil {
 				log.Println(err)
 			} else {
-				channels[logLine.devType] <- logLine
+				task := &MemcacheTask{
+					key: key,
+					value: packed,
+				}
+				channels[logLine.devType] <- task
 			}
-		}
-
-		if err = scanner.Err(); err != nil {
-			log.Fatal(err)
-		} else {
-			results <- filePath
 		}
 	}
 }
 
-func memcacheWorker(mc *Memcache, queue <-chan LogLine) {
+func memcacheWorker(mc *Memcache, queue <-chan *MemcacheTask) {
 	for {
-		key, packed, err := bufLine(<-queue)
+		task, ok := <-queue
+		if !ok {
+			return
+		}
+		err := mc.setItem(task.key, task.value)
 		if err != nil {
 			log.Println(err)
-		} else {
-			err := mc.setItem(key, packed)
-			if err != nil {
-				log.Println(err)
-			}
 		}
 	}
 }
@@ -182,37 +176,58 @@ func main() {
 		"dvid": "127.0.0.1:33016",
 	}
 
-	channels := make(map[string](chan LogLine))
+	channels := make(map[string](chan *MemcacheTask))
 
 	for key, addr := range connections {
-		channels[key] = make(chan LogLine)
+		channels[key] = make(chan *MemcacheTask)
 		go memcacheWorker(setConnection(addr), channels[key])
+		defer close(channels[key])
 	}
 
-	jobFiles := make(chan string)
-	resultFiles := make(chan string)
 	filePaths := []string{}
 
 	for _, file := range files {
 		r, err := regexp.MatchString("^[^\\.]+\\.tsv\\.gz$", file.Name())
 		if err == nil && r {
-			filePath := filepath.Join(LogsDir, file.Name())
-			filePaths = append(filePaths, filePath)
-			go logFileWorker(channels, jobFiles, resultFiles)
+			filePaths = append(filePaths, filepath.Join(LogsDir, file.Name()))
 		}
 	}
 
+	lines := make(chan string)
+
+	for i := 0; i < 100; i++ {
+		go lineWorker(channels, lines)
+	}
+
 	sort.Strings(filePaths)
+	defer close(lines)
 
 	for _, filePath := range filePaths {
 		log.Printf("Start handle file %s\n", filePath)
-		jobFiles <- filePath
-	}
-	close(jobFiles)
+		file, err := os.Open(filePath)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-	for j := 0; j < len(filePaths); j++ {
-		processedFile := <-resultFiles
-		dotRename(processedFile)
-		log.Printf("Finish handle file %s\n", processedFile)
+		gz, err := gzip.NewReader(file)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		scanner := bufio.NewScanner(gz)
+
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+
+		if err := scanner.Err(); err != nil {
+			log.Fatal(err)
+		}
+
+		gz.Close()
+		file.Close()
+
+		dotRename(filePath)
+		log.Printf("Finish handle file %s\n", filePath)
 	}
 }
