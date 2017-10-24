@@ -8,8 +8,11 @@ import (
 	"github.com/AndrewLrrr/memclog/appsinstalled"
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/golang/protobuf/proto"
+	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -29,9 +32,14 @@ func (mc *Memcache) setItem(key string, value []byte) error {
 	return mc.connection.Set(&memcache.Item{Key: key, Value: value})
 }
 
-func dotRename(path string) error {
-	newPath := "." + path
-	return os.Rename(path, newPath)
+func dotRename(dir string, file os.FileInfo) error {
+	if name := file.Name(); !strings.HasPrefix(name, ".") {
+		newName := "." + name
+		oldPath := filepath.Join(dir, name)
+		newPath := filepath.Join(dir, newName)
+		return os.Rename(oldPath, newPath)
+	}
+	return nil
 }
 
 func setConnection(addr string) *Memcache {
@@ -132,7 +140,7 @@ func handleLogFile(filename string, channels map[string](chan LogLine)) {
 	}
 }
 
-func worker(mc *Memcache, queue <-chan LogLine) {
+func memcacheWorker(mc *Memcache, queue <-chan LogLine) {
 	for {
 		key, packed, err := bufLine(<-queue)
 		if err != nil {
@@ -147,7 +155,15 @@ func worker(mc *Memcache, queue <-chan LogLine) {
 }
 
 func main() {
-	filename := "20170929000000.tsv.gz"
+	num := runtime.NumCPU()
+	runtime.GOMAXPROCS(num)
+
+	logsDir := "./logs"
+
+	files, err := ioutil.ReadDir(logsDir)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	connections := map[string]string{
 		"idfa": "127.0.0.1:33013",
@@ -160,11 +176,17 @@ func main() {
 
 	for key, addr := range connections {
 		channels[key] = make(chan LogLine)
-		go worker(setConnection(addr), channels[key])
+		go memcacheWorker(setConnection(addr), channels[key])
 	}
 
-	num := runtime.NumCPU()
-	runtime.GOMAXPROCS(num)
-
-	handleLogFile(filename, channels)
+	for _, file := range files {
+		r, err := regexp.MatchString("^.*.tsv.gz$", file.Name())
+		if err == nil && r {
+			filePath := filepath.Join(logsDir, file.Name())
+			log.Printf("Start handle file %s\n", filePath)
+			handleLogFile(filePath, channels)
+			dotRename(logsDir, file)
+			log.Printf("Finish handle file %s\n", filePath)
+		}
+	}
 }
