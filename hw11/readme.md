@@ -46,5 +46,5 @@ sys   3m30.204s
 
 real  0m58.217s
 user  0m37.760s
-sys	  0m32.948s
+sys   0m32.948s
 ```
