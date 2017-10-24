@@ -10,9 +10,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	"log"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
-	"runtime"
 )
 
 type LogLine struct {
@@ -21,22 +21,42 @@ type LogLine struct {
 	apps           []uint32
 }
 
-func (logLine *LogLine) parse(line string) error {
+type Memcache struct {
+	connection *memcache.Client
+}
+
+func (mc *Memcache) setItem(key string, value []byte) error {
+	return mc.connection.Set(&memcache.Item{Key: key, Value: value})
+}
+
+func dotRename(path string) error {
+	newPath := "." + path
+	return os.Rename(path, newPath)
+}
+
+func setConnection(addr string) *Memcache {
+	mc := Memcache{}
+	mc.connection = memcache.New(addr)
+	return &mc
+}
+
+func parseLine(line string) (LogLine, error) {
 	lineParts := strings.Split(strings.TrimSpace(line), "\t")
+	logLine := LogLine{}
 
 	if len(lineParts) != 5 {
-		return errors.New("incorrect log line\n")
+		return logLine, errors.New("incorrect log line\n")
 	}
 
 	logLine.devType = strings.TrimSpace(lineParts[0])
 	logLine.devId = strings.TrimSpace(lineParts[1])
 
 	if len(logLine.devId) == 0 {
-		return errors.New("empty dev_id is not allowed\n")
+		return logLine, errors.New("empty dev_id is not allowed\n")
 	}
 
 	if len(logLine.devType) == 0 {
-		return errors.New("empty dev_type is not allowed\n")
+		return logLine, errors.New("empty dev_type is not allowed\n")
 	}
 
 	if lat, err := strconv.ParseFloat(lineParts[2], 64); err == nil {
@@ -63,26 +83,7 @@ func (logLine *LogLine) parse(line string) error {
 		}
 	}
 
-	return nil
-}
-
-type Memcache struct {
-	connection *memcache.Client
-}
-
-func (mc *Memcache) setItem(key string, value []byte) error {
-	return mc.connection.Set(&memcache.Item{Key: key, Value: value})
-}
-
-func dotRename(path string) error {
-	newPath := "." + path
-	return os.Rename(path, newPath)
-}
-
-func setConnection(addr string) *Memcache {
-	mc := Memcache{}
-	mc.connection = memcache.New(addr)
-	return &mc
+	return logLine, nil
 }
 
 func bufLine(logLine LogLine) (string, []byte, error) {
@@ -99,6 +100,36 @@ func bufLine(logLine LogLine) (string, []byte, error) {
 	}
 
 	return key, data, nil
+}
+
+func handleLogFile(filename string, channels map[string](chan LogLine)) {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer file.Close()
+	defer gz.Close()
+
+	scanner := bufio.NewScanner(gz)
+
+	for scanner.Scan() {
+		logLine, err := parseLine(scanner.Text())
+		if err != nil {
+			log.Println(err)
+		} else {
+			channels[logLine.devType] <- logLine
+		}
+	}
+
+	if err = scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func worker(mc *Memcache, queue <-chan LogLine) {
@@ -118,48 +149,22 @@ func worker(mc *Memcache, queue <-chan LogLine) {
 func main() {
 	filename := "20170929000000.tsv.gz"
 
-	connections := map[string]*Memcache{
-		"idfa": setConnection("127.0.0.1:33013"),
-		"gaid": setConnection("127.0.0.1:33014"),
-		"adid": setConnection("127.0.0.1:33015"),
-		"dvid": setConnection("127.0.0.1:33016"),
+	connections := map[string]string{
+		"idfa": "127.0.0.1:33013",
+		"gaid": "127.0.0.1:33014",
+		"adid": "127.0.0.1:33015",
+		"dvid": "127.0.0.1:33016",
 	}
 
 	channels := make(map[string](chan LogLine))
 
-	for key, connection := range connections {
+	for key, addr := range connections {
 		channels[key] = make(chan LogLine)
-		go worker(connection, channels[key])
+		go worker(setConnection(addr), channels[key])
 	}
 
 	num := runtime.NumCPU()
 	runtime.GOMAXPROCS(num)
 
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	gz, err := gzip.NewReader(file)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer file.Close()
-	defer gz.Close()
-
-	scanner := bufio.NewScanner(gz)
-
-	for scanner.Scan() {
-		logLine := LogLine{}
-		if err := logLine.parse(scanner.Text()); err != nil {
-			log.Println(err)
-		} else {
-			channels[logLine.devType] <-logLine
-		}
-	}
-
-	if err = scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
+	handleLogFile(filename, channels)
 }

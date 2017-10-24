@@ -14,8 +14,7 @@ func TestBufLine(t *testing.T) {
 
 	scanner := bufio.NewScanner(strings.NewReader(lines))
 	for scanner.Scan() {
-		logLine := LogLine{}
-		err := logLine.parse(scanner.Text())
+		logLine, err := parseLine(scanner.Text())
 
 		if err != nil {
 			t.Error(err)
