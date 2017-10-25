@@ -311,6 +311,8 @@ func main() {
 		log.Println("----------------------------------------------")
 	}
 
+	close(statistic)
+
 	log.Printf("total read lines: %d", totalRead)
 	log.Printf("total processed lines: %d", totalProcessed)
 	log.Printf("total error lines: %d", totalErrors)
