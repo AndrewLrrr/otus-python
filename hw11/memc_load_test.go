@@ -19,7 +19,7 @@ func TestBufLine(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			key, test, err := bufLine(logLine)
+			key, test, err := protobufLine(logLine)
 			if err != nil {
 				t.Error(err)
 			}

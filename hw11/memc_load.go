@@ -67,6 +67,63 @@ func (mc *Memcache) setItem(key string, value []byte) error {
 	return nil
 }
 
+func lineWorker(channels map[string](chan *MemcacheTask), queue <-chan string, stats chan *Statistic) {
+	processErrors := 0
+	for {
+		line, ok := <-queue
+		if !ok {
+			stat := &Statistic{
+				processed: 0,
+				errors:    processErrors,
+			}
+			stats <- stat
+			return
+		}
+		logLine, err := parseLine(line)
+		if err != nil {
+			processErrors++
+			log.Println(err)
+		} else {
+			packed, err := protobufLine(logLine)
+			if err != nil {
+				processErrors++
+				log.Println(err)
+			} else {
+				key := fmt.Sprintf("%s:%s", logLine.devType, logLine.devId)
+				task := &MemcacheTask{
+					key:   key,
+					value: packed,
+				}
+				channels[logLine.devType] <- task
+			}
+		}
+	}
+}
+
+func memcacheWorker(mc *Memcache, queue <-chan *MemcacheTask, stats chan *Statistic) {
+	processSuccess := 0
+	processErrors := 0
+	for {
+		task, ok := <-queue
+		if !ok {
+			stat := &Statistic{
+				processed: processSuccess,
+				errors:    processErrors,
+			}
+			stats <- stat
+			log.Printf("memcache processed %d | errors %d", processSuccess, processErrors)
+			return
+		}
+		err := mc.setItem(task.key, task.value)
+		if err != nil {
+			processErrors++
+			log.Println(err)
+		} else {
+			processSuccess++
+		}
+	}
+}
+
 func dotRename(path string) error {
 	if name := filepath.Base(path); !strings.HasPrefix(name, ".") {
 		newName := "." + name
@@ -130,76 +187,19 @@ func parseLine(line string) (LogLine, error) {
 	return logLine, nil
 }
 
-func bufLine(logLine LogLine) (string, []byte, error) {
+func protobufLine(logLine LogLine) ([]byte, error) {
 	packed := appsinstalled.UserApps{
 		Apps: logLine.apps,
 		Lat:  &logLine.lat,
 		Lon:  &logLine.lon,
 	}
-	key := fmt.Sprintf("%s:%s", logLine.devType, logLine.devId)
 
 	data, err := proto.Marshal(&packed)
 	if err != nil {
-		return "", data, errors.New(fmt.Sprintf("marshaling error: %s", err))
+		return nil, errors.New(fmt.Sprintf("marshaling error: %s", err))
 	}
 
-	return key, data, nil
-}
-
-func lineWorker(channels map[string](chan *MemcacheTask), queue <-chan string, stats chan *Statistic) {
-	processErrors := 0
-	for {
-		line, ok := <-queue
-		if !ok {
-			stat := &Statistic{
-				processed: 0,
-				errors:    processErrors,
-			}
-			stats <- stat
-			return
-		}
-		logLine, err := parseLine(line)
-		if err != nil {
-			processErrors++
-			log.Println(err)
-		} else {
-			key, packed, err := bufLine(logLine)
-			if err != nil {
-				processErrors++
-				log.Println(err)
-			} else {
-				task := &MemcacheTask{
-					key:   key,
-					value: packed,
-				}
-				channels[logLine.devType] <- task
-			}
-		}
-	}
-}
-
-func memcacheWorker(mc *Memcache, queue <-chan *MemcacheTask, stats chan *Statistic) {
-	processSuccess := 0
-	processErrors := 0
-	for {
-		task, ok := <-queue
-		if !ok {
-			stat := &Statistic{
-				processed: processSuccess,
-				errors:    processErrors,
-			}
-			stats <- stat
-			log.Printf("memcache processed %d | errors %d", processSuccess, processErrors)
-			return
-		}
-		err := mc.setItem(task.key, task.value)
-		if err != nil {
-			processErrors++
-			log.Println(err)
-		} else {
-			processSuccess++
-		}
-	}
+	return data, nil
 }
 
 func fileHandler(filePath string, connections map[string]*Memcache, statistic chan *Statistic) (map[string]int, error) {
