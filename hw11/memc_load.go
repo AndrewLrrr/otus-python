@@ -48,6 +48,13 @@ type Memcache struct {
 	connection *memcache.Client
 }
 
+func NewMemcache(addr string) *Memcache {
+	mc := Memcache{}
+	mc.connection = memcache.New(addr)
+	mc.connection.Timeout = MemcacheTimeout
+	return &mc
+}
+
 func (mc *Memcache) setItem(key string, value []byte) error {
 	tries := 3
 	delay := 100
@@ -132,13 +139,6 @@ func dotRename(path string) error {
 		return os.Rename(path, newPath)
 	}
 	return nil
-}
-
-func setConnection(addr string) *Memcache {
-	mc := Memcache{}
-	mc.connection = memcache.New(addr)
-	mc.connection.Timeout = MemcacheTimeout
-	return &mc
 }
 
 func parseLine(line string) (LogLine, error) {
@@ -274,10 +274,10 @@ func main() {
 	}
 
 	connections := map[string]*Memcache{
-		"idfa": setConnection("127.0.0.1:33013"),
-		"gaid": setConnection("127.0.0.1:33014"),
-		"adid": setConnection("127.0.0.1:33015"),
-		"dvid": setConnection("127.0.0.1:33016"),
+		"idfa": NewMemcache("127.0.0.1:33013"),
+		"gaid": NewMemcache("127.0.0.1:33014"),
+		"adid": NewMemcache("127.0.0.1:33015"),
+		"dvid": NewMemcache("127.0.0.1:33016"),
 	}
 
 	statistic := make(chan *Statistic)
