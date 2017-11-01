@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/AndrewLrrr/memclog/appsinstalled"
 	"github.com/bradfitz/gomemcache/memcache"
@@ -27,6 +28,24 @@ const (
 	MemcacheTimeout = 500 * time.Millisecond
 	NormalErrRate   = 0.01
 )
+
+type Config struct {
+	workers, buffer int
+	conn_addrs      map[string]string
+}
+
+func NewConfig() *Config {
+	return &Config{
+		workers: workers,
+		buffer:  buffer,
+		conn_addrs: map[string]string{
+			"idfa": idfa,
+			"gaid": gaid,
+			"adid": adid,
+			"dvid": dvid,
+		},
+	}
+}
 
 type LogLine struct {
 	devType, devId string
@@ -202,7 +221,12 @@ func protobufLine(logLine LogLine) ([]byte, error) {
 	return data, nil
 }
 
-func fileHandler(filePath string, connections map[string]*Memcache, statistic chan *Statistic) (map[string]int, error) {
+func fileHandler(
+	filePath string,
+	config *Config,
+	connections map[string]*Memcache,
+	statistic chan *Statistic,
+) (map[string]int, error) {
 	channels := make(map[string](chan *MemcacheTask))
 	for key, connection := range connections {
 		channels[key] = make(chan *MemcacheTask, ChannelsBuffer)
@@ -210,9 +234,9 @@ func fileHandler(filePath string, connections map[string]*Memcache, statistic ch
 	}
 
 	read := 0
-	lines := make(chan string, ChannelsBuffer)
+	lines := make(chan string, config.buffer)
 
-	for i := 0; i < LineWorkers; i++ {
+	for i := 0; i < config.workers; i++ {
 		go lineWorker(channels, lines, statistic)
 	}
 
@@ -243,9 +267,9 @@ func fileHandler(filePath string, connections map[string]*Memcache, statistic ch
 	close(lines)
 
 	result := map[string]int{
-		"read": read,
+		"read":           read,
 		"processSuccess": 0,
-		"processErrors": 0,
+		"processErrors":  0,
 	}
 
 	for j := 0; j < LineWorkers; j++ {
@@ -264,20 +288,30 @@ func fileHandler(filePath string, connections map[string]*Memcache, statistic ch
 	return result, nil
 }
 
+var (
+	workers, buffer        int
+	idfa, gaid, adid, dvid string
+)
+
+func init() {
+	flag.IntVar(&workers, "workers", 100, "")
+	flag.IntVar(&buffer, "buffer", 100, "")
+	flag.StringVar(&idfa, "idfa", "127.0.0.1:33013", "")
+	flag.StringVar(&gaid, "gaid", "127.0.0.1:33014", "")
+	flag.StringVar(&adid, "adid", "127.0.0.1:33015", "")
+	flag.StringVar(&dvid, "dvid", "127.0.0.1:33016", "")
+}
+
 func main() {
 	num := runtime.NumCPU()
 	runtime.GOMAXPROCS(num)
 
+	flag.Parse()
+	config := NewConfig()
+
 	files, err := ioutil.ReadDir(LogsDir)
 	if err != nil {
 		log.Fatal(err)
-	}
-
-	connections := map[string]*Memcache{
-		"idfa": NewMemcache("127.0.0.1:33013"),
-		"gaid": NewMemcache("127.0.0.1:33014"),
-		"adid": NewMemcache("127.0.0.1:33015"),
-		"dvid": NewMemcache("127.0.0.1:33016"),
 	}
 
 	statistic := make(chan *Statistic)
@@ -292,19 +326,27 @@ func main() {
 
 	sort.Strings(filePaths)
 
+	connections := make(map[string]*Memcache)
+
+	for conn, addr := range config.conn_addrs {
+		connections[conn] = NewMemcache(addr)
+	}
+
 	totalRead := 0
 	totalProcessed := 0
 	totalErrors := 0
 	for _, filePath := range filePaths {
 		log.Printf("start handle file %s", filePath)
 
-		result, err := fileHandler(filePath, connections, statistic)
+		result, err := fileHandler(filePath, config, connections, statistic)
 
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		dotRename(filePath)
+		if err := dotRename(filePath); err != nil {
+			log.Fatal(err)
+		}
 		log.Printf("finish handle file %s", filePath)
 
 		totalRead += result["read"]
