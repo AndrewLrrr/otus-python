@@ -22,8 +22,6 @@ import (
 )
 
 const (
-	LineWorkers     = 100
-	ChannelsBuffer  = 100
 	LogsDir         = "./logs"
 	MemcacheTimeout = 500 * time.Millisecond
 	NormalErrRate   = 0.01
@@ -229,7 +227,7 @@ func fileHandler(
 ) (map[string]int, error) {
 	channels := make(map[string](chan *MemcacheTask))
 	for key, connection := range connections {
-		channels[key] = make(chan *MemcacheTask, ChannelsBuffer)
+		channels[key] = make(chan *MemcacheTask, config.buffer)
 		go memcacheWorker(connection, channels[key], statistic)
 	}
 
@@ -272,7 +270,7 @@ func fileHandler(
 		"processErrors":  0,
 	}
 
-	for j := 0; j < LineWorkers; j++ {
+	for j := 0; j < config.workers; j++ {
 		stat := <-statistic
 		result["processSuccess"] += stat.processed
 		result["processErrors"] += stat.errors

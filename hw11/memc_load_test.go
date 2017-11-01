@@ -19,7 +19,7 @@ func TestBufLine(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		} else {
-			key, test, err := protobufLine(logLine)
+			test, err := protobufLine(logLine)
 			if err != nil {
 				t.Error(err)
 			}
@@ -28,10 +28,6 @@ func TestBufLine(t *testing.T) {
 
 			if err != nil {
 				t.Error("unmarshaling error: ", err)
-			}
-
-			if key != logLine.devType+":"+logLine.devId {
-				t.Error("Incorrect key")
 			}
 
 			if logLine.lon != *newTest.Lon {
