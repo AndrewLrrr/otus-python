@@ -202,6 +202,68 @@ func memcacheWorker(mc *Memcache, queue <-chan *MemcacheTask, stats chan *Statis
 	}
 }
 
+func fileHandler(filePath string, connections map[string]*Memcache, statistic chan *Statistic) (map[string]int, error) {
+	channels := make(map[string](chan *MemcacheTask))
+	for key, connection := range connections {
+		channels[key] = make(chan *MemcacheTask, ChannelsBuffer)
+		go memcacheWorker(connection, channels[key], statistic)
+	}
+
+	read := 0
+	lines := make(chan string, ChannelsBuffer)
+
+	for i := 0; i < LineWorkers; i++ {
+		go lineWorker(channels, lines, statistic)
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+
+	scanner := bufio.NewScanner(gz)
+
+	for scanner.Scan() {
+		lines <- scanner.Text()
+		read += 1
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	defer gz.Close()
+	defer file.Close()
+
+	close(lines)
+
+	result := map[string]int{
+		"read": read,
+		"processSuccess": 0,
+		"processErrors": 0,
+	}
+
+	for j := 0; j < LineWorkers; j++ {
+		stat := <-statistic
+		result["processSuccess"] += stat.processed
+		result["processErrors"] += stat.errors
+	}
+
+	for _, channel := range channels {
+		close(channel)
+		stat := <-statistic
+		result["processSuccess"] += stat.processed
+		result["processErrors"] += stat.errors
+	}
+
+	return result, nil
+}
+
 func main() {
 	num := runtime.NumCPU()
 	runtime.GOMAXPROCS(num)
@@ -236,76 +298,28 @@ func main() {
 	for _, filePath := range filePaths {
 		log.Printf("start handle file %s", filePath)
 
-		channels := make(map[string](chan *MemcacheTask))
-		for key, connection := range connections {
-			channels[key] = make(chan *MemcacheTask, ChannelsBuffer)
-			go memcacheWorker(connection, channels[key], statistic)
-		}
+		result, err := fileHandler(filePath, connections, statistic)
 
-		read := 0
-		lines := make(chan string, ChannelsBuffer)
-
-		for i := 0; i < LineWorkers; i++ {
-			go lineWorker(channels, lines, statistic)
-		}
-
-		file, err := os.Open(filePath)
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		gz, err := gzip.NewReader(file)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		scanner := bufio.NewScanner(gz)
-
-		for scanner.Scan() {
-			lines <- scanner.Text()
-			read++
-		}
-
-		if err := scanner.Err(); err != nil {
-			log.Fatal(err)
-		}
-
-		gz.Close()
-		file.Close()
 
 		dotRename(filePath)
 		log.Printf("finish handle file %s", filePath)
 
-		close(lines)
+		totalRead += result["read"]
+		totalProcessed += result["processSuccess"]
+		totalErrors += result["processErrors"]
+		log.Printf("read lines: %d", result["read"])
+		log.Printf("processed lines: %d", result["processSuccess"])
+		log.Printf("error lines: %d", result["processErrors"])
 
-		processSuccess := 0
-		processErrors := 0
-		for j := 0; j < LineWorkers; j++ {
-			stat := <-statistic
-			processSuccess += stat.processed
-			processErrors += stat.errors
-		}
-
-		for _, channel := range channels {
-			close(channel)
-			stat := <-statistic
-			processSuccess += stat.processed
-			processErrors += stat.errors
-		}
-
-		totalRead += read
-		totalProcessed += processSuccess
-		totalErrors += processErrors
-		log.Printf("read lines: %d", read)
-		log.Printf("processed lines: %d", processSuccess)
-		log.Printf("error lines: %d", processErrors)
-
-		if processSuccess > 0 {
-			errRate := float64(processErrors / processSuccess)
+		if result["processSuccess"] > 0 {
+			errRate := float64(result["processErrors"] / result["processSuccess"])
 			if errRate < NormalErrRate {
-				log.Printf("file: %s | Acceptable error rate (%d). Successfull load", filePath, processErrors)
+				log.Printf("file: %s | Acceptable error rate (%f). Successfull load", filePath, errRate)
 			} else {
-				log.Printf("file: %s | High error rate (%d > %d). Failed load", filePath, processErrors, NormalErrRate)
+				log.Printf("file: %s | High error rate (%f > %f). Failed load", filePath, errRate, NormalErrRate)
 			}
 		}
 		log.Println("----------------------------------------------")
